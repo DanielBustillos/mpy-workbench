@@ -16,6 +16,20 @@ const decorations_1 = require("./decorations");
 const pyraw_1 = require("./pyraw");
 // import { monitor } from "./monitor"; // switched to auto-suspend REPL strategy
 function activate(context) {
+    // Helper para validar si la carpeta local está inicializada
+    async function isLocalSyncInitialized() {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (!ws)
+            return false;
+        const manifestPath = path.join(ws.uri.fsPath, ".esp32sync.json");
+        try {
+            await fs.access(manifestPath);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
     // Context key for welcome UI when no port is selected
     const updatePortContext = () => {
         const v = vscode.workspace.getConfiguration().get("esp32fs.connect", "auto");
@@ -302,6 +316,11 @@ function activate(context) {
             vscode.window.showErrorMessage("No workspace folder open");
             return;
         }
+        const initialized = await isLocalSyncInitialized();
+        if (!initialized) {
+            vscode.window.showWarningMessage("La carpeta local no está inicializada para sincronización. Inicialízala antes de sincronizar.");
+            return;
+        }
         await vscode.commands.executeCommand("esp32fs.syncWorkspaceToDevice");
         const ignore = (0, sync_1.defaultIgnore)();
         const man = await (0, sync_1.buildManifest)(ws.uri.fsPath, ignore);
@@ -462,6 +481,11 @@ function activate(context) {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws) {
             vscode.window.showErrorMessage("No workspace folder open");
+            return;
+        }
+        const initialized = await isLocalSyncInitialized();
+        if (!initialized) {
+            vscode.window.showWarningMessage("La carpeta local no está inicializada para sincronización. Inicialízala antes de sincronizar.");
             return;
         }
         const rootPath = vscode.workspace.getConfiguration().get("esp32fs.rootPath", "/");
