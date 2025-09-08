@@ -1,0 +1,153 @@
+{
+  "name": "mpy-studio",
+  "icon": "media/logo.png",
+  "displayName": "MPY Studio",
+  "description": "Browse and manage MicroPython files on ESP32 and similar boards via raw REPL (pyserial).",
+  "version": "0.0.1",
+  "publisher": "your-name",
+  "engines": { "vscode": "^1.84.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "contributes": {
+    "viewsWelcome": [
+      {
+        "view": "mpyStudioFsView",
+        "contents": "No serial port selected.\n\n[Select Serial Port](command:mpyStudio.pickPort)",
+        "when": "!mpyStudio.hasPort"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "mpyStudioFs", "title": "MPY Studio", "icon": "./media/file.svg" }
+      ]
+    },
+    "customEditors": [],
+    "css": ["./media/esp32fs.css"],
+    "views": {
+      "mpyStudioFs": [
+        { "id": "mpyStudioFsView", "name": "Files", "icon": "$(files)" },
+        { "id": "mpyStudioActionsView", "name": "Board Actions", "icon": "$(tools)" },
+        { "id": "mpyStudioSyncView", "name": "Sync Files", "icon": "$(sync)" }
+      ]
+    },
+    "commands": [
+      { "command": "mpyStudio.refresh", "title": "MPY Studio: Refresh", "icon": "$(refresh)" },
+      { "command": "mpyStudio.openFile", "title": "MPY Studio: Open File" },
+      { "command": "mpyStudio.uploadActiveFile", "title": "MPY Studio: Upload Active File" },
+      { "command": "mpyStudio.pickPort", "title": "MPY Studio: Select Serial Port", "icon": "$(plug)" },
+      { "command": "mpyStudio.refreshPorts", "title": "MPY Studio: Refresh Ports", "icon": "$(refresh)" },
+      { "command": "mpyStudio.setPort", "title": "MPY Studio: Use This Port" },
+      { "command": "mpyStudio.mkdir", "title": "MPY Studio: New Folder" },
+      { "command": "mpyStudio.openSerial", "title": "MPY Studio: Open Serial Monitor", "icon": "$(terminal)" },
+      { "command": "mpyStudio.openRepl", "title": "MPY Studio: Open REPL Terminal", "icon": "$(terminal)" },
+      { "command": "mpyStudio.runActiveFile", "title": "MPY Studio: Run Active File", "icon": "$(play)" },
+      { "command": "mpyStudio.stop", "title": "MPY Studio: Stop (Ctrl-C/A/D)", "icon": "$(debug-stop)" },
+      { "command": "mpyStudio.syncBaseline", "title": "MPY Studio: Sync all files (Local → Board)", "icon": "$(cloud-upload)" },
+      { "command": "mpyStudio.checkDiffs", "title": "MPY Studio: Check files differences", "icon": "$(diff)" },
+      { "command": "mpyStudio.syncDiffsLocalToBoard", "title": "MPY Studio: Sync changed Files Local → Board", "icon": "$(export)" },
+      { "command": "mpyStudio.syncDiffsBoardToLocal", "title": "MPY Studio: Sync changed Files Board → Local", "icon": "$(import)" },
+      { "command": "mpyStudio.syncBaselineFromBoard", "title": "MPY Studio: Sync all files (Board → Local)", "icon": "$(cloud-download)" },
+      { "command": "mpyStudio.serialSendCtrlC", "title": "MPY Studio: Interrupt (Ctrl-C, Ctrl-B)", "icon": "$(zap)" },
+      { "command": "mpyStudio.killPortUsers", "title": "MPY Studio: Close other port services", "icon": "$(circle-slash)" },
+      { "command": "mpyStudio.openFileFromBoard", "title": "MPY Studio: Open File (from Board)", "icon": "$(cloud-download)" },
+      { "command": "mpyStudio.syncFileLocalToBoard", "title": "MPY Studio: Sync File Local → Board", "icon": "$(cloud-upload)" },
+      { "command": "mpyStudio.syncFileBoardToLocal", "title": "MPY Studio: Sync File Board → Local", "icon": "$(cloud-download)" },
+      { "command": "mpyStudio.delete", "title": "MPY Studio: Delete from Board" },
+      { "command": "mpyStudio.deleteBoardAndLocal", "title": "MPY Studio: Delete from Board and Local", "icon": { "light": "./media/trash-red.svg", "dark": "./media/trash-red.svg" } },
+      { "command": "mpyStudio.runFromView", "title": "MPY Studio: Run Command (View Wrapper)" },
+      { "command": "mpyStudio.syncBaselineFromView", "title": "MPY Studio: Sync all files (Local → Board) (View)" },
+      { "command": "mpyStudio.syncBaselineFromBoardFromView", "title": "MPY Studio: Sync all files (Board → Local) (View)" },
+      { "command": "mpyStudio.checkDiffsFromView", "title": "MPY Studio: Check files differences (View)" },
+      { "command": "mpyStudio.syncDiffsLocalToBoardFromView", "title": "MPY Studio: Sync changed Files Local → Board (View)", "icon": "$(cloud-upload)" },
+      { "command": "mpyStudio.syncDiffsBoardToLocalFromView", "title": "MPY Studio: Sync changed Files Board → Local (View)", "icon": "$(cloud-download)" },
+      { "command": "mpyStudio.runActiveFileFromView", "title": "MPY Studio: Run Active File (View)" },
+      { "command": "mpyStudio.openReplFromView", "title": "MPY Studio: Open REPL (View)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "mpyStudio.syncBaselineFromView", "when": "view == mpyStudioSyncView", "group": "navigation@0" },
+        { "command": "mpyStudio.syncBaselineFromBoardFromView", "when": "view == mpyStudioSyncView", "group": "navigation@1" },
+        { "command": "mpyStudio.checkDiffsFromView", "when": "view == mpyStudioSyncView", "group": "navigation@3" },
+        { "command": "mpyStudio.syncDiffsLocalToBoardFromView", "when": "view == mpyStudioSyncView", "group": "navigation@4" },
+        { "command": "mpyStudio.syncDiffsBoardToLocalFromView", "when": "view == mpyStudioSyncView", "group": "navigation@5" },
+        { "command": "mpyStudio.runActiveFileFromView", "when": "view == mpyStudioActionsView", "group": "navigation@0" },
+        { "command": "mpyStudio.openReplFromView", "when": "view == mpyStudioActionsView", "group": "navigation@1" },
+        { "command": "mpyStudio.serialSendCtrlC", "when": "view == mpyStudioActionsView", "group": "navigation@2" },
+        { "command": "mpyStudio.killPortUsers", "when": "view == mpyStudioActionsView", "group": "navigation@4" },
+        { "command": "mpyStudio.refresh", "when": "view == mpyStudioFsView", "group": "navigation@0" },
+        { "command": "mpyStudio.pickPort", "when": "view == mpyStudioFsView", "group": "navigation@1" },
+        { "command": "mpyStudio.checkDiffsFromView", "when": "view == mpyStudioSyncView", "group": "navigation@3" }
+      ],
+      "view/item/context": [
+        { "command": "mpyStudio.openFile", "when": "view == mpyStudioFsView && viewItem == file", "group": "1_open@1" },
+        { "command": "mpyStudio.openFileFromBoard", "when": "view == mpyStudioFsView && viewItem == file", "group": "1_open@2" },
+        { "command": "mpyStudio.syncFileLocalToBoard", "when": "view == mpyStudioFsView && viewItem == file", "group": "2_sync@1" },
+        { "command": "mpyStudio.syncFileBoardToLocal", "when": "view == mpyStudioFsView && viewItem == file", "group": "2_sync@2" },
+        { "command": "mpyStudio.delete", "when": "view == mpyStudioFsView && (viewItem == file || viewItem == dir)", "group": "3_delete@1" },
+        { "command": "mpyStudio.deleteBoardAndLocal", "when": "view == mpyStudioFsView && (viewItem == file || viewItem == dir)", "group": "3_delete@2" }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "MPY Studio",
+      "properties": {
+        "mpyStudio.autoSyncOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sincronizar automáticamente al guardar: si está activado, al guardar un archivo local también se sube al board; si está desactivado, solo se guarda en local."
+        },
+        "mpyStudio.connect": {
+          "type": "string",
+          "default": "auto",
+          "description": "Serial device (e.g. auto, /dev/ttyUSB0, COM3)"
+        },
+        "mpyStudio.serialAutoSuspend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically close the REPL terminal before file ops and reopen after."
+        },
+        "mpyStudio.interruptOnConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "On opening the REPL, send Ctrl-C to interrupt any running program."
+        },
+        "mpyStudio.strictConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Before opening REPL, perform a strict handshake (reset + quick check + retry) to ensure prompt like Thonny."
+        },
+        "mpyStudio.preListDelayMs": {
+          "type": "number",
+          "default": 150,
+          "description": "Delay (ms) before listing after interrupt/reset to allow OS/device to settle."
+        },
+        "mpyStudio.rootPath": {
+          "type": "string",
+          "default": "/",
+          "description": "Root path to show on device (e.g. /, /lib)"
+        },
+        "mpyStudio.usePyRawList": {
+          "type": "boolean",
+          "default": false,
+          "description": "List directories using a Python raw REPL script (requires python3 + pyserial)."
+        }
+      }
+    }
+  },
+  "main": "./dist/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.84.0",
+    "typescript": "^5.4.0",
+    "vsce": "^2.15.0"
+  }, 
+    "repository": {
+    "type": "git",
+    "url": "https://github.com/DanielBucam/mpy-studio"
+  }
+}

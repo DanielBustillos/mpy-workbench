@@ -1,0 +1,17 @@
+.esp32fs-no-port-item {
+  text-align: center !important;
+  display: flex !important;
+  flex-direction: row !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 10px !important;
+  padding: 8px 12px !important;
+  background-color: var(--vscode-button-background) !important;
+  color: var(--vscode-button-foreground) !important;
+  border-radius: 2px !important;
+  cursor: pointer !important;
+}
+
+.esp32fs-no-port-item:hover {
+  background-color: var(--vscode-button-hoverBackground) !important;
+}
