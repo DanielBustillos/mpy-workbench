@@ -24,7 +24,7 @@ function normalizeConnect(c) {
     return c;
 }
 function toolPath() {
-    const ext = vscode.extensions.getExtension("your-name.esp32-files-explorer");
+    const ext = vscode.extensions.getExtension("your-name.mpy-workbench");
     if (!ext)
         throw new Error("Extension not found for tool path");
     return path.join(ext.extensionPath, "scripts", "pyserial_tool.py");
@@ -44,7 +44,7 @@ function runTool(args, opts = {}) {
 }
 async function ls(p) {
     const cfg = vscode.workspace.getConfiguration();
-    const connect = normalizeConnect(cfg.get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(cfg.get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     const { stdout } = await runTool(["ls", "--port", connect, "--path", p]);
@@ -52,7 +52,7 @@ async function ls(p) {
 }
 async function lsTyped(p) {
     const cfg = vscode.workspace.getConfiguration();
-    const connect = normalizeConnect(cfg.get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(cfg.get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     const { stdout } = await runTool(["ls_typed", "--port", connect, "--path", p]);
@@ -74,50 +74,50 @@ async function listSerialPorts() {
     }
 }
 async function mkdir(p) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["mkdir", "--port", connect, "--path", p]);
 }
 async function rm(p) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["rm", "--port", connect, "--path", p]);
 }
 async function cpFromDevice(devicePath, localPath) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["cp_from", "--port", connect, "--src", devicePath, "--dst", localPath]);
 }
 async function cpToDevice(localPath, devicePath) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["cp_to", "--port", connect, "--src", localPath, "--dst", devicePath]);
 }
 async function uploadReplacing(localPath, devicePath) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["upload_replacing", "--port", connect, "--src", localPath, "--dst", devicePath]);
 }
 async function rmrf(p) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["rmrf", "--port", connect, "--path", p]);
 }
 async function runFile(localPath) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     const { stdout } = await runTool(["run_file", "--port", connect, "--src", localPath]);
     return { stdout: String(stdout || ""), stderr: "" };
 }
 async function reset() {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         return;
     try {
@@ -126,7 +126,7 @@ async function reset() {
     catch { }
 }
 async function listTreeStats(root) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("esp32fs.connect", "auto") || "auto");
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     const { stdout } = await runTool(["tree_stats", "--port", connect, "--path", root]);

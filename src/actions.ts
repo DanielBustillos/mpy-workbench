@@ -17,7 +17,7 @@ export class ActionsTree implements vscode.TreeDataProvider<ActionNode> {
     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
     item.contextValue = "action";
     // Route via a wrapper so clicking in the view won't trigger kill/ctrl-c pre-ops
-    item.command = { command: "esp32fs.runFromView", title: element.label, arguments: [element.command, ...(element.args ?? [])] };
+    item.command = { command: "mpyWorkbench.runFromView", title: element.label, arguments: [element.command, ...(element.args ?? [])] };
     // Icons for actions
     if (element.id === "runActive") {
       item.iconPath = new vscode.ThemeIcon("play", new vscode.ThemeColor("charts.green"));
@@ -43,12 +43,12 @@ export class ActionsTree implements vscode.TreeDataProvider<ActionNode> {
 
   async getChildren(): Promise<ActionNode[]> {
     return [
-      { id: "runActive", label: "Run Active File", command: "esp32fs.runActiveFile" },
-      { id: "openRepl", label: "Open REPL Terminal", command: "esp32fs.openRepl" },
-      { id: "stop", label: "Stop (Ctrl-C, Ctrl-A, Ctrl-D)", command: "esp32fs.stop" },
-      { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "esp32fs.serialSendCtrlC" },
+      { id: "runActive", label: "Run Active File", command: "mpyWorkbench.runActiveFile" },
+      { id: "openRepl", label: "Open REPL Terminal", command: "mpyWorkbench.openRepl" },
+      { id: "stop", label: "Stop (Ctrl-C, Ctrl-A, Ctrl-D)", command: "mpyWorkbench.stop" },
+      { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" },
 
-      { id: "killUsers", label: "Close other port services", command: "esp32fs.killPortUsers" }
+      { id: "killUsers", label: "Close other port services", command: "mpyWorkbench.killPortUsers" }
     ];
   }
 }

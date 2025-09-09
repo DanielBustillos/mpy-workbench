@@ -10,7 +10,7 @@ class SyncTree {
     refresh() { this._onDidChangeTreeData.fire(); }
     getTreeItem(element) {
         const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
-        item.command = { command: "esp32fs.runFromView", title: element.label, arguments: [element.command] };
+        item.command = { command: "mpyWorkbench.runFromView", title: element.label, arguments: [element.command] };
         if (element.id === "baseline")
             item.iconPath = new vscode.ThemeIcon("cloud-upload");
         if (element.id === "baselineFromBoard")
@@ -25,11 +25,11 @@ class SyncTree {
     }
     async getChildren() {
         return [
-            { id: "baseline", label: "Sync all files (Local → Board)", command: "esp32fs.syncBaseline" },
-            { id: "baselineFromBoard", label: "Sync all files (Board → Local)", command: "esp32fs.syncBaselineFromBoard" },
-            { id: "checkDiffs", label: "Check files differences", command: "esp32fs.checkDiffs" },
-            { id: "syncDiffsLocalToBoard", label: "Sync changed Files Local → Board", command: "esp32fs.syncDiffsLocalToBoard" },
-            { id: "syncDiffsBoardToLocal", label: "Sync changed Files Board → Local", command: "esp32fs.syncDiffsBoardToLocal" }
+            { id: "baseline", label: "Sync all files (Local → Board)", command: "mpyWorkbench.syncBaseline" },
+            { id: "baselineFromBoard", label: "Sync all files (Board → Local)", command: "mpyWorkbench.syncBaselineFromBoard" },
+            { id: "checkDiffs", label: "Check files differences", command: "mpyWorkbench.checkDiffs" },
+            { id: "syncDiffsLocalToBoard", label: "Sync changed Files Local → Board", command: "mpyWorkbench.syncDiffsLocalToBoard" },
+            { id: "syncDiffsBoardToLocal", label: "Sync changed Files Board → Local", command: "mpyWorkbench.syncDiffsBoardToLocal" }
         ];
     }
 }

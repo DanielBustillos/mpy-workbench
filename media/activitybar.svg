@@ -1,6 +1,7 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="32" height="32" rx="7" fill="#222"/>
-  <circle cx="16" cy="16" r="10" fill="#FFD600"/>
-  <rect x="13" y="10" width="6" height="12" rx="2" fill="#222"/>
-  <rect x="10" y="18" width="12" height="4" rx="2" fill="#222"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5;">
+    <g transform="matrix(0.0665883,0,0,0.0665883,-0.412272,-0.584417)">
+        <path d="M51.803,84.54L167.385,84.902L214.833,144.508L449.467,144.508L450.063,413.661L42.973,413.217L42.885,84.457L51.803,84.54Z" style="fill:none;stroke:rgb(136,136,136);stroke-width:30.04px;"/>
+    </g>
 </svg>

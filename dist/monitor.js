@@ -47,7 +47,7 @@ class SerialMonitor {
     async tick() {
         if (!this.running || this.busy)
             return;
-        const connect = vscode.workspace.getConfiguration().get("esp32fs.connect", "auto");
+        const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
         const device = (connect || '').replace(/^serial:\/\//, "").replace(/^serial:\//, "");
         // Spawn a short-lived miniterm to read any pending output, then kill.
         const args = ["-m", "serial.tools.miniterm", device, "115200"];

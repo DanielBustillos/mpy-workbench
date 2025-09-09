@@ -1,0 +1,17 @@
+# Fuentes y configs que no necesita el usuario
+src/**
+scripts/**
+tsconfig.json
+.vscode/**
+.git/**
+.github/**
+.vscodeignore
+.vscodelocal/**
+node_modules/**
+
+# Mantén solo lo necesario
+!dist/**
+!media/**
+!readme.md
+!changelog.md
+!license*

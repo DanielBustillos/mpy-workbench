@@ -3,11 +3,14 @@
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via raw REPL (pyserial).",
-  "version": "0.0.1",
-  "publisher": "your-name",
+  "version": "0.0.2",
+  "publisher": "DanielBucam",
   "engines": { "vscode": "^1.84.0" },
-  "categories": ["Other"],
-  "activationEvents": [],
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+
   "contributes": {
     "viewsWelcome": [
       {
@@ -18,7 +21,7 @@
     ],
     "viewsContainers": {
       "activitybar": [
-  { "id": "mpyWorkbenchFs", "title": "MPY Workbench", "icon": "./media/file.svg" }
+  { "id": "mpyWorkbenchFs", "title": "MPY Workbench", "icon": "./media/activitybar.svg" }
       ]
     },
     "customEditors": [],

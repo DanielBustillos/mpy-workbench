@@ -23,20 +23,20 @@ export function activate(context: vscode.ExtensionContext) {
   }
   // Context key for welcome UI when no port is selected
   const updatePortContext = () => {
-    const v = vscode.workspace.getConfiguration().get<string>("esp32fs.connect", "auto");
+    const v = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
     const has = !!v && v !== "auto";
-    vscode.commands.executeCommand('setContext', 'esp32fs.hasPort', has);
+    vscode.commands.executeCommand('setContext', 'mpyWorkbench.hasPort', has);
   };
   // Ensure no port is selected at startup
-  vscode.workspace.getConfiguration().update("esp32fs.connect", "auto", vscode.ConfigurationTarget.Global);
+  vscode.workspace.getConfiguration().update("mpyWorkbench.connect", "auto", vscode.ConfigurationTarget.Global);
   updatePortContext();
 
   const tree = new Esp32Tree();
-  const view = vscode.window.createTreeView("esp32FsView", { treeDataProvider: tree });
+  const view = vscode.window.createTreeView("mpyWorkbenchFsView", { treeDataProvider: tree });
   const actionsTree = new ActionsTree();
-  const actionsView = vscode.window.createTreeView("esp32ActionsView", { treeDataProvider: actionsTree });
+  const actionsView = vscode.window.createTreeView("mpyWorkbenchActionsView", { treeDataProvider: actionsTree });
   const syncTree = new SyncTree();
-  const syncView = vscode.window.createTreeView("esp32SyncView", { treeDataProvider: syncTree });
+  const syncView = vscode.window.createTreeView("mpyWorkbenchSyncView", { treeDataProvider: syncTree });
   const decorations = new Esp32DecorationProvider();
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
   let lastLocalOnlyNotice = 0;
@@ -50,12 +50,12 @@ export function activate(context: vscode.ExtensionContext) {
     // Optionally perform a quick check to nudge the connection.
     try { await mp.ls("/"); } catch {}
     if (listingInProgress) {
-      const d = vscode.workspace.getConfiguration().get<number>("esp32fs.preListDelayMs", 150);
+      const d = vscode.workspace.getConfiguration().get<number>("mpyWorkbench.preListDelayMs", 150);
       if (d > 0) await new Promise(r => setTimeout(r, d));
     }
   }
   async function withAutoSuspend<T>(fn: () => Promise<T>, opts: { preempt?: boolean } = {}): Promise<T> {
-    const enabled = vscode.workspace.getConfiguration().get<boolean>("esp32fs.serialAutoSuspend", true);
+    const enabled = vscode.workspace.getConfiguration().get<boolean>("mpyWorkbench.serialAutoSuspend", true);
     // Optionally preempt any in-flight mpremote process so new command takes priority
     if (opts.preempt !== false) {
       opQueue = Promise.resolve();
@@ -81,12 +81,12 @@ export function activate(context: vscode.ExtensionContext) {
     view,
     actionsView,
     syncView,
-    vscode.commands.registerCommand("esp32fs.refresh", () => { 
+    vscode.commands.registerCommand("mpyWorkbench.refresh", () => { 
       // On refresh, only issue the mpremote list without extra control signals
       tree.setRawListOnlyOnce();
       tree.refresh();
     }),
-    vscode.commands.registerCommand("esp32fs.pickPort", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.pickPort", async () => {
       const ports = await mp.listSerialPorts();
       const items: vscode.QuickPickItem[] = [
         { label: "auto", description: "Auto-detect device" },
@@ -95,15 +95,15 @@ export function activate(context: vscode.ExtensionContext) {
       const picked = await vscode.window.showQuickPick(items, { placeHolder: "Select ESP32 serial port" });
       if (!picked) return;
       const value = picked.label === "auto" ? "auto" : picked.label;
-      await vscode.workspace.getConfiguration().update("esp32fs.connect", value, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", value, vscode.ConfigurationTarget.Global);
       updatePortContext();
       vscode.window.showInformationMessage(`ESP32 connect set to ${value}`);
       tree.refresh();
       // After selecting port, check diffs so user sees up-to-date status
-      try { await vscode.commands.executeCommand("esp32fs.checkDiffs"); } catch {}
+      try { await vscode.commands.executeCommand("mpyWorkbench.checkDiffs"); } catch {}
     }),
-    vscode.commands.registerCommand("esp32fs.serialSendCtrlC", async () => {
-      const connect = vscode.workspace.getConfiguration().get<string>("esp32fs.connect", "auto");
+    vscode.commands.registerCommand("mpyWorkbench.serialSendCtrlC", async () => {
+      const connect = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
       if (!connect || connect === "auto") { vscode.window.showWarningMessage("Select a specific serial port first (not 'auto')."); return; }
       // Prefer using REPL terminal if open to avoid port conflicts and return to friendly REPL
       if (isReplOpen()) {
@@ -133,9 +133,9 @@ export function activate(context: vscode.ExtensionContext) {
       });
       // No auto-refresh here
     }),
-    vscode.commands.registerCommand("esp32fs.stop", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.stop", async () => {
       const cfg = vscode.workspace.getConfiguration();
-      const connect = cfg.get<string>("esp32fs.connect", "auto");
+      const connect = cfg.get<string>("mpyWorkbench.connect", "auto");
       if (!connect || connect === "auto") { vscode.window.showWarningMessage("Select a specific serial port first (not 'auto')."); return; }
       const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
       // If REPL terminal is open, prefer sending through it to avoid port conflicts
@@ -167,9 +167,9 @@ export function activate(context: vscode.ExtensionContext) {
         });
       });
     }),
-    vscode.commands.registerCommand("esp32fs.killPortUsers", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.killPortUsers", async () => {
       const cfg = vscode.workspace.getConfiguration();
-      const connect = cfg.get<string>("esp32fs.connect", "auto");
+      const connect = cfg.get<string>("mpyWorkbench.connect", "auto");
       if (!connect || connect === "auto") { vscode.window.showWarningMessage("Select a specific serial port first (not 'auto')."); return; }
       const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
       // Close our REPL if open to avoid killing our own holder
@@ -216,7 +216,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand("esp32fs.openFileFromBoard", async (node: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.openFileFromBoard", async (node: Esp32Node) => {
       if (node.kind !== "file") return;
       const temp = vscode.Uri.joinPath(context.globalStorageUri, "from-board", node.path.replace(/\//g, "_"));
       await fs.mkdir(path.dirname(temp.fsPath), { recursive: true });
@@ -224,11 +224,11 @@ export function activate(context: vscode.ExtensionContext) {
       const doc = await vscode.workspace.openTextDocument(temp);
       await vscode.window.showTextDocument(doc, { preview: true });
     }),
-    vscode.commands.registerCommand("esp32fs.syncFileLocalToBoard", async (node: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.syncFileLocalToBoard", async (node: Esp32Node) => {
       if (node.kind !== "file") return;
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const rel = toLocalRelative(node.path, rootPath);
       const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
       try {
@@ -242,11 +242,11 @@ export function activate(context: vscode.ExtensionContext) {
       await withAutoSuspend(() => mp.cpToDevice(abs, node.path));
       vscode.window.showInformationMessage(`Synced local → board: ${rel}`);
     }),
-    vscode.commands.registerCommand("esp32fs.syncFileBoardToLocal", async (node: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.syncFileBoardToLocal", async (node: Esp32Node) => {
       if (node.kind !== "file") return;
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const rel = toLocalRelative(node.path, rootPath);
       const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
       await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -257,16 +257,16 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.window.showTextDocument(doc, { preview: false });
       } catch {}
     }),
-    vscode.commands.registerCommand("esp32fs.setPort", async (port: string) => {
-      await vscode.workspace.getConfiguration().update("esp32fs.connect", port, vscode.ConfigurationTarget.Global);
+    vscode.commands.registerCommand("mpyWorkbench.setPort", async (port: string) => {
+      await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);
       updatePortContext();
       vscode.window.showInformationMessage(`ESP32 connect set to ${port}`);
       tree.refresh();
       // After selecting port, run diff check
-      try { await vscode.commands.executeCommand("esp32fs.checkDiffs"); } catch {}
+      try { await vscode.commands.executeCommand("mpyWorkbench.checkDiffs"); } catch {}
     }),
 
-    vscode.commands.registerCommand("esp32fs.syncBaseline", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.syncBaseline", async () => {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
       const initialized = await isLocalSyncInitialized();
@@ -274,7 +274,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage("La carpeta local no está inicializada para sincronización. Inicialízala antes de sincronizar.");
         return;
       }
-      await vscode.commands.executeCommand("esp32fs.syncWorkspaceToDevice");
+      try { await vscode.commands.executeCommand("mpyWorkbench.syncWorkspaceToDevice"); } catch {}
       const ignore = defaultIgnore();
       const man = await buildManifest(ws.uri.fsPath, ignore);
       const manifestPath = path.join(ws.uri.fsPath, ".esp32sync.json");
@@ -282,16 +282,16 @@ export function activate(context: vscode.ExtensionContext) {
       const tmp = path.join(context.globalStorageUri.fsPath, "esp32sync.json");
       await fs.mkdir(path.dirname(tmp), { recursive: true });
       await fs.writeFile(tmp, JSON.stringify(man));
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const deviceManifest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/.esp32sync.json";
       await withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
       vscode.window.showInformationMessage("ESP32: Sync all files (Local → Board) completed");
     }),
 
-    vscode.commands.registerCommand("esp32fs.syncBaselineFromBoard", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromBoard", async () => {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "ESP32: Sync all files (Board → Local)", cancellable: false }, async (progress) => {
         let done = 0;
@@ -312,22 +312,22 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 
-    vscode.commands.registerCommand("esp32fs.openSerial", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.openSerial", async () => {
       await openReplTerminal();
     }),
-    vscode.commands.registerCommand("esp32fs.openRepl", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.openRepl", async () => {
       const term = await getReplTerminal();
       term.show(true);
     }),
-    vscode.commands.registerCommand("esp32fs.stopSerial", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.stopSerial", async () => {
       await closeReplTerminal();
       vscode.window.showInformationMessage("ESP32: REPL closed");
     }),
 
-    vscode.commands.registerCommand("esp32fs.autoSuspendLs", async (pathArg: string) => {
+    vscode.commands.registerCommand("mpyWorkbench.autoSuspendLs", async (pathArg: string) => {
       listingInProgress = true;
       try {
-        const usePyRaw = vscode.workspace.getConfiguration().get<boolean>("esp32fs.usePyRawList", false);
+        const usePyRaw = vscode.workspace.getConfiguration().get<boolean>("mpyWorkbench.usePyRawList", false);
         return await withAutoSuspend(() => (usePyRaw ? listDirPyRaw(pathArg) : mp.lsTyped(pathArg)), { preempt: false });
       } finally {
         listingInProgress = false;
@@ -335,7 +335,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     // Keep welcome button visibility in sync if user changes settings directly
     vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('esp32fs.connect')) updatePortContext();
+      if (e.affectsConfiguration('mpyWorkbench.connect')) updatePortContext();
     }),
 
     // Removed control commands (Stop/Interrupt/Soft Reboot)
@@ -343,7 +343,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 
     // Removed old sync commands (sync current folder / full workspace)
-    vscode.commands.registerCommand("esp32fs.uploadActiveFile", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.uploadActiveFile", async () => {
       const ed = vscode.window.activeTextEditor;
       if (!ed) { vscode.window.showErrorMessage("No active editor"); return; }
       await ed.document.save();
@@ -354,7 +354,7 @@ export function activate(context: vscode.ExtensionContext) {
       await withAutoSuspend(() => mp.uploadReplacing(ed.document.uri.fsPath, dest));
       vscode.window.showInformationMessage(`Uploaded to ${dest}`);
     }),
-    vscode.commands.registerCommand("esp32fs.runActiveFile", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.runActiveFile", async () => {
       const ed = vscode.window.activeTextEditor;
       if (!ed) { vscode.window.showErrorMessage("No active editor"); return; }
       await ed.document.save();
@@ -377,7 +377,7 @@ export function activate(context: vscode.ExtensionContext) {
       await new Promise(r => setTimeout(r, 150));
       term.sendText("\x02", false); // Ctrl-B (friendly REPL)
     }),
-    vscode.commands.registerCommand("esp32fs.checkDiffs", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.checkDiffs", async () => {
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: "Checking file differences...",
@@ -385,7 +385,7 @@ export function activate(context: vscode.ExtensionContext) {
       }, async (progress) => {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-        const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+        const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
         
         progress.report({ message: "Reading board files..." });
         const relFromDevice = (devicePath: string) => {
@@ -429,7 +429,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`ESP32: Diff check complete (${diffSet.size} items flagged)`);
       });
     }),
-    vscode.commands.registerCommand("esp32fs.syncDiffsLocalToBoard", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.syncDiffsLocalToBoard", async () => {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
       const initialized = await isLocalSyncInitialized();
@@ -437,7 +437,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage("La carpeta local no está inicializada para sincronización. Inicialízala antes de sincronizar.");
         return;
       }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       // Get current diffs and filter to files by comparing with current device stats
       const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
       const filesSet = new Set(deviceStats.filter(e => !e.isDir).map(e => e.path));
@@ -460,10 +460,10 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage("ESP32: Diffed files uploaded to board and marks cleared");
       tree.refresh();
     }),
-    vscode.commands.registerCommand("esp32fs.syncDiffsBoardToLocal", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.syncDiffsBoardToLocal", async () => {
       const ws2 = vscode.workspace.workspaceFolders?.[0];
       if (!ws2) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-      const rootPath2 = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath2 = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       // Get current diffs and filter to files by comparing with current device stats
       const deviceStats2 = await withAutoSuspend(() => mp.listTreeStats(rootPath2));
       const filesSet2 = new Set(deviceStats2.filter(e => !e.isDir).map(e => e.path));
@@ -486,10 +486,10 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage("ESP32: Diffed files downloaded from board and marks cleared");
       tree.refresh();
     }),
-    vscode.commands.registerCommand("esp32fs.openFile", async (node: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.openFile", async (node: Esp32Node) => {
       if (node.kind !== "file") return;
       const ws = vscode.workspace.workspaceFolders?.[0];
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       if (ws) {
         const rel = toLocalRelative(node.path, rootPath);
         const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
@@ -498,7 +498,7 @@ export function activate(context: vscode.ExtensionContext) {
         try { await fs.access(abs); } catch { await withAutoSuspend(() => mp.cpFromDevice(node.path, abs)); }
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
         await vscode.window.showTextDocument(doc, { preview: false });
-        await context.workspaceState.update("esp32fs.lastOpenedPath", abs);
+        await context.workspaceState.update("mpyWorkbench.lastOpenedPath", abs);
       } else {
         // Fallback: no workspace, use temp
         const temp = vscode.Uri.joinPath(context.globalStorageUri, node.path.replace(/\//g, "_"));
@@ -506,10 +506,10 @@ export function activate(context: vscode.ExtensionContext) {
         await withAutoSuspend(() => mp.cpFromDevice(node.path, temp.fsPath));
         const doc = await vscode.workspace.openTextDocument(temp);
         await vscode.window.showTextDocument(doc, { preview: true });
-        await context.workspaceState.update("esp32fs.lastOpenedPath", temp.fsPath);
+        await context.workspaceState.update("mpyWorkbench.lastOpenedPath", temp.fsPath);
       }
     }),
-    vscode.commands.registerCommand("esp32fs.mkdir", async (node?: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.mkdir", async (node?: Esp32Node) => {
       const base = node?.kind === "dir" ? node.path : (node ? path.posix.dirname(node.path) : "/");
       const name = await vscode.window.showInputBox({ prompt: "New folder name", validateInput: v => v ? undefined : "Required" });
       if (!name) return;
@@ -517,19 +517,19 @@ export function activate(context: vscode.ExtensionContext) {
       await withAutoSuspend(() => mp.mkdir(target));
       tree.refresh();
     }),
-    vscode.commands.registerCommand("esp32fs.delete", async (node: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.delete", async (node: Esp32Node) => {
       const okBoard = await vscode.window.showWarningMessage(`Delete ${node.path} from board?`, { modal: true }, "Delete");
       if (okBoard !== "Delete") return;
       await withAutoSuspend(() => mp.rm(node.path));
       tree.refresh();
     }),
-    vscode.commands.registerCommand("esp32fs.deleteBoardAndLocal", async (node: Esp32Node) => {
+    vscode.commands.registerCommand("mpyWorkbench.deleteBoardAndLocal", async (node: Esp32Node) => {
   const okBoardLocal = await vscode.window.showWarningMessage(`Delete ${node.path} from board AND local workspace?`, { modal: true }, "Delete");
   if (okBoardLocal !== "Delete") return;
       await withAutoSuspend(() => mp.rm(node.path));
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (ws) {
-        const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+        const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
         const rel = toLocalRelative(node.path, rootPath);
         const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
         try {
@@ -543,28 +543,28 @@ export function activate(context: vscode.ExtensionContext) {
       tree.refresh();
     }),
     // View wrappers: run commands without pre-ops (no kill/Ctrl-C)
-    vscode.commands.registerCommand("esp32fs.runFromView", async (cmd: string, ...args: any[]) => {
+    vscode.commands.registerCommand("mpyWorkbench.runFromView", async (cmd: string, ...args: any[]) => {
       setSkipIdleOnce();
       try { await vscode.commands.executeCommand(cmd, ...args); } catch (e) {
         const msg = (e as any)?.message ?? String(e);
         vscode.window.showErrorMessage(`ESP32 command failed: ${msg}`);
       }
     }),
-    vscode.commands.registerCommand("esp32fs.syncBaselineFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.syncBaseline"); }),
-    vscode.commands.registerCommand("esp32fs.syncBaselineFromBoardFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.syncBaselineFromBoard"); }),
+    vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncBaseline"); }),
+    vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromBoardFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncBaselineFromBoard"); }),
 
-    vscode.commands.registerCommand("esp32fs.checkDiffsFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.checkDiffs"); }),
-    vscode.commands.registerCommand("esp32fs.syncDiffsLocalToBoardFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.syncDiffsLocalToBoard"); }),
-    vscode.commands.registerCommand("esp32fs.syncDiffsBoardToLocalFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.syncDiffsBoardToLocal"); }),
-    vscode.commands.registerCommand("esp32fs.runActiveFileFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.runActiveFile"); }),
-    vscode.commands.registerCommand("esp32fs.openReplFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("esp32fs.openRepl"); })
+    vscode.commands.registerCommand("mpyWorkbench.checkDiffsFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.checkDiffs"); }),
+    vscode.commands.registerCommand("mpyWorkbench.syncDiffsLocalToBoardFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncDiffsLocalToBoard"); }),
+    vscode.commands.registerCommand("mpyWorkbench.syncDiffsBoardToLocalFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncDiffsBoardToLocal"); }),
+    vscode.commands.registerCommand("mpyWorkbench.runActiveFileFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.runActiveFile"); }),
+    vscode.commands.registerCommand("mpyWorkbench.openReplFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.openRepl"); })
   );
-  // Auto-upload on save: if file is inside a workspace, push to device path mapped by esp32fs.rootPath
+  // Auto-upload on save: if file is inside a workspace, push to device path mapped by mpyWorkbench.rootPath
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
       const ws = vscode.workspace.getWorkspaceFolder(doc.uri);
       if (!ws) return;
-      const autoSync = vscode.workspace.getConfiguration().get<boolean>("esp32fs.autoSyncOnSave", true);
+      const autoSync = vscode.workspace.getConfiguration().get<boolean>("mpyWorkbench.autoSyncOnSave", true);
       if (!autoSync) {
         const now = Date.now();
         if (now - lastLocalOnlyNotice > 5000) {
@@ -573,7 +573,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         return; // solo guardar en local
       }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("esp32fs.rootPath", "/");
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const rel = path.relative(ws.uri.fsPath, doc.uri.fsPath).replace(/\\/g, "/");
       const deviceDest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + rel;
       try { await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest)); }
@@ -596,7 +596,7 @@ async function getReplTerminal(): Promise<vscode.Terminal> {
     if (alive) return replTerminal;
     replTerminal = undefined;
   }
-  const connect = vscode.workspace.getConfiguration().get<string>("esp32fs.connect", "auto");
+  const connect = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
   // Launch terminal using Python's miniterm (pyserial)
   const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
   replTerminal = vscode.window.createTerminal({
@@ -625,8 +625,8 @@ async function closeReplTerminal() {
 async function openReplTerminal() {
   // Strict handshake like Thonny: ensure device is interrupted and responsive before opening REPL
   const cfg = vscode.workspace.getConfiguration();
-  const interrupt = cfg.get<boolean>("esp32fs.interruptOnConnect", true);
-  const strict = cfg.get<boolean>("esp32fs.strictConnect", true);
+  const interrupt = cfg.get<boolean>("mpyWorkbench.interruptOnConnect", true);
+  const strict = cfg.get<boolean>("mpyWorkbench.strictConnect", true);
   if (strict) {
     await strictConnectHandshake(interrupt);
   } else if (interrupt) {
