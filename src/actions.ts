@@ -11,9 +11,17 @@ export class ActionsTree implements vscode.TreeDataProvider<ActionNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  refresh(): void { this._onDidChangeTreeData.fire(); }
+  refreshTree(): void { this._onDidChangeTreeData.fire(); }
 
   getTreeItem(element: ActionNode): vscode.TreeItem {
+    return this.getTreeItemForAction(element);
+  }
+
+  getChildren(): Thenable<ActionNode[]> {
+    return Promise.resolve(this.getActionNodes());
+  }
+
+  getTreeItemForAction(element: ActionNode): vscode.TreeItem {
     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
     item.contextValue = "action";
     // Route via a wrapper so clicking in the view won't trigger kill/ctrl-c pre-ops
@@ -41,14 +49,12 @@ export class ActionsTree implements vscode.TreeDataProvider<ActionNode> {
     return item;
   }
 
-  async getChildren(): Promise<ActionNode[]> {
+  async getActionNodes(): Promise<ActionNode[]> {
     return [
       { id: "runActive", label: "Run Active File", command: "mpyWorkbench.runActiveFile" },
       { id: "openRepl", label: "Open REPL Terminal", command: "mpyWorkbench.openRepl" },
       { id: "stop", label: "Stop (Ctrl-C, Ctrl-A, Ctrl-D)", command: "mpyWorkbench.stop" },
-      { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" },
-
-      { id: "killUsers", label: "Close other port services", command: "mpyWorkbench.killPortUsers" }
+      { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" }
     ];
   }
 }

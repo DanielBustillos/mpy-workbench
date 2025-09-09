@@ -10,7 +10,8 @@ async function listDirPyRaw(dirPath) {
     if (!connect || connect === "auto")
         throw new Error("No fixed serial port selected");
     const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-    const script = path.join(vscode.extensions.getExtension("your-name.mpy-workbench").extensionPath, "scripts", "thonny_list_files.py");
+    // Use the actual publisher.name from package.json
+    const script = path.join(vscode.extensions.getExtension("DanielBucam.mpy-workbench").extensionPath, "scripts", "thonny_list_files.py");
     return new Promise((resolve, reject) => {
         (0, node_child_process_1.execFile)("python3", [script, "--port", device, "--baudrate", "115200", "--path", dirPath], { timeout: 10000 }, (err, stdout, stderr) => {
             if (err)

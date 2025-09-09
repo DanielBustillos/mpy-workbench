@@ -153,6 +153,95 @@ def cmd_rmrf(port, path):
         raw_exit(ser)
 
 
+def cmd_delete_file(port, filepath):
+    """Deletes a file using pyserial"""
+    code = (
+        "import os\n"
+        f"path = r\"{filepath}\"\n"
+        f"try:\n"
+        f" # Check that file exists before deleting\n"
+        f" stat_info = os.stat(path)\n"
+        f" # Try to delete\n"
+        f" os.remove(path)\n"
+        f" # Verify it was deleted\n"
+        f" try:\n"
+        f"  os.stat(path)\n"
+        f"  print('<thonny>error:still_exists</thonny>',end='')\n"
+        f" except OSError:\n"
+        f"  print('<thonny>deleted</thonny>',end='')\n"
+        f"except OSError as e:\n"
+        f" errno = getattr(e, 'errno', None) or (e.args[0] if e.args else 'unknown')\n"
+        f" print('<thonny>error:OSError_'+str(errno)+'_'+str(e)+'</thonny>',end='')\n"
+        f"except Exception as e:\n"
+        f" print('<thonny>error:'+type(e).__name__+'_'+str(e)+'</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    
+    # Verificar la respuesta
+    s = out.decode("utf-8", errors="ignore")
+    if "<thonny>error:" in s:
+        try:
+            error_msg = s.split("<thonny>error:")[1].split("</thonny>")[0]
+            print(f"Error deleting file: {error_msg}", file=sys.stderr)
+        except:
+            print("Unknown error deleting file", file=sys.stderr)
+
+
+def cmd_delete_folder_recursive(port, folderpath):
+    """Deletes folder recursively using pyserial"""
+    code = (
+        "import os\n"
+        "errors = []\n"
+        "def delete_recursive(path):\n"
+        " try:\n"
+        "  items = os.listdir(path)\n"
+        "  for item in items:\n"
+        "   item_path = path + '/' + item if not path.endswith('/') else path + item\n"
+        "   try:\n"
+        "    stat_info = os.stat(item_path)\n"
+        "    if (stat_info[0] & 0x4000) != 0:\n"
+        "     delete_recursive(item_path)\n"
+        "     try:\n"
+        "      os.rmdir(item_path)\n"
+        "     except Exception as e:\n"
+        "      errors.append('rmdir:'+item_path+':'+str(e))\n"
+        "    else:\n"
+        "     try:\n"
+        "      os.remove(item_path)\n"
+        "     except Exception as e:\n"
+        "      errors.append('remove:'+item_path+':'+str(e))\n"
+        "   except Exception as e:\n"
+        "    errors.append('stat:'+item_path+':'+str(e))\n"
+        "  try:\n"
+        "   os.rmdir(path)\n"
+        "  except Exception as e:\n"
+        "   errors.append('rmdir:'+path+':'+str(e))\n"
+        " except Exception as e:\n"
+        "  errors.append('listdir:'+path+':'+str(e))\n"
+        f"delete_recursive(r\"{folderpath}\")\n"
+        "if errors:\n"
+        " print('<thonny>errors:'+';'.join(errors)+'</thonny>',end='')\n"
+        "else:\n"
+        " print('<thonny>deleted</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    
+    # Verificar la respuesta
+    s = out.decode("utf-8", errors="ignore")
+    if "<thonny>errors:" in s:
+        try:
+            error_msg = s.split("<thonny>errors:")[1].split("</thonny>")[0]
+            print(f"Errors deleting folder: {error_msg}", file=sys.stderr)
+        except:
+            print("Unknown errors deleting folder", file=sys.stderr)
+
+
 def cmd_cp_from(port, src, dst):
     code = (
         "import ubinascii as b64, os\n"
@@ -175,6 +264,10 @@ def cmd_cp_from(port, src, dst):
 
 
 def cmd_cp_to(port, src, dst):
+    import os
+    if os.path.isdir(src):
+        raise ValueError(f"Cannot upload directory '{src}' as file. Use recursive directory upload instead.")
+    
     with open(src, "rb") as f:
         data = f.read()
     b = base64.b64encode(data).decode()
@@ -199,6 +292,10 @@ def cmd_cp_to(port, src, dst):
 
 
 def cmd_upload_replacing(port, src, dst):
+    import os
+    if os.path.isdir(src):
+        raise ValueError(f"Cannot upload directory '{src}' as file. Use recursive directory upload instead.")
+    
     tmp = dst + ".new"
     cmd_cp_to(port, src, tmp)
     code = (
@@ -228,6 +325,144 @@ def cmd_reset(port):
     with open_ser(port) as ser:
         ser.write(b"\x04")
         time.sleep(0.1)
+
+
+def cmd_file_exists(port, path):
+    """Checks if a file or folder exists"""
+    code = (
+        "import os\n"
+        f"path = r\"{path}\"\n"
+        f"try:\n"
+        f" stat_result = os.stat(path)\n"
+        f" print('<thonny>exists</thonny>',end='')\n"
+        f"except OSError as e:\n"
+        f" # Error 2 means 'No such file or directory'\n"
+        f" if hasattr(e, 'errno') and e.errno == 2:\n"
+        f"  print('<thonny>not_exists</thonny>',end='')\n"
+        f" else:\n"
+        f"  print('<thonny>not_exists</thonny>',end='')\n"
+        f"except Exception as e:\n"
+        f" print('<thonny>not_exists</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    
+    s = out.decode("utf-8", errors="ignore")
+    try:
+        result = s.split("<thonny>")[1].split("</thonny>")[0]
+        sys.stdout.write(result.strip())
+    except Exception:
+        sys.stdout.write("not_exists")
+
+
+def cmd_file_info(port, path):
+    """Gets detailed information about a file or folder"""
+    code = (
+        "import os\n"
+        f"try:\n"
+        f" stat = os.stat(r\"{path}\")\n"
+        f" mode = stat[0]\n"
+        f" size = stat[6] if len(stat) > 6 else 0\n"
+        f" is_dir = (mode & 0x4000) != 0\n"
+        f" is_readonly = (mode & 0x0080) == 0\n"
+        f" print('<thonny>'+str(mode)+'|'+str(size)+'|'+('dir' if is_dir else 'file')+'|'+('ro' if is_readonly else 'rw')+'</thonny>',end='')\n"
+        f"except OSError as e:\n"
+        f" print('<thonny>error:'+str(e)+'</thonny>',end='')\n"
+        f"except Exception as e:\n"
+        f" print('<thonny>error:'+str(e)+'</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    
+    s = out.decode("utf-8", errors="ignore")
+    try:
+        result = s.split("<thonny>")[1].split("</thonny>")[0]
+        sys.stdout.write(result)
+    except Exception:
+        sys.stdout.write("error")
+
+
+def cmd_delete_all_in_path(port, root_path):
+    """Deletes all files and folders in a path using improved functions"""
+    # Primero obtener lista de archivos
+    items_json = cmd_tree_stats_json(port, root_path)
+    
+    try:
+        import json
+        items = json.loads(items_json)
+    except:
+        print("Error: Could not parse file list", file=sys.stderr)
+        return
+    
+    deleted = []
+    errors = []
+    
+    # Separate files and folders
+    files = [item for item in items if not item['isDir']]
+    dirs = [item for item in items if item['isDir']]
+    # Sort folders by depth (deepest first)
+    dirs.sort(key=lambda x: x['path'].count('/'), reverse=True)
+    
+    # Delete files first
+    for file_item in files:
+        try:
+            cmd_delete_file(port, file_item['path'])
+            deleted.append(file_item['path'])
+        except Exception as e:
+            errors.append(f"File {file_item['path']}: {str(e)}")
+    
+    # Delete folders (from deepest)
+    for dir_item in dirs:
+        try:
+            cmd_delete_folder_recursive(port, dir_item['path'])
+            deleted.append(dir_item['path'])
+        except Exception as e:
+            errors.append(f"Directory {dir_item['path']}: {str(e)}")
+    
+    # Report results
+    result = {
+        "deleted": deleted,
+        "errors": errors,
+        "deleted_count": len(deleted),
+        "error_count": len(errors)
+    }
+    
+    try:
+        import json
+        print(json.dumps(result))
+    except:
+        print(f"Deleted: {len(deleted)}, Errors: {len(errors)}")
+
+
+def cmd_tree_stats_json(port, root):
+    """Version that returns JSON directly"""
+    code = (
+        "import os\nDIR=0x4000\n"
+        f"root=r\"{root}\"\n"
+        "try:\n import ujson as json\nexcept: import json\n"
+        "out=[]\n"
+        "def isdir(p):\n"
+        " try:\n  return (os.stat(p)[0] & DIR)!=0\n"
+        " except: return False\n"
+        "def walk(p):\n"
+        " try:\n  for n in os.listdir(p):\n   fp=p+('/' if not p.endswith('/') else '')+n\n   try:\n    st=os.stat(fp)\n    mode=st[0]; size=st[6] if len(st)>6 else 0; mtime=st[8] if len(st)>8 else 0\n    d=(mode & DIR)!=0\n    out.append({'path':fp,'isDir':d,'size':size,'mtime':mtime})\n    if d: walk(fp)\n   except: pass\n except: pass\n"
+        "walk(root)\n"
+        "print('<thonny>'+json.dumps(out)+'</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    s = out.decode("utf-8", errors="ignore")
+    try:
+        a = s.split("<thonny>")[1].split("</thonny>")[0]
+        return a
+    except Exception:
+        return "[]"
 
 
 def cmd_tree_stats(port, root):
@@ -267,12 +502,17 @@ def main():
     p_mkdir = sub.add_parser("mkdir"); p_mkdir.add_argument("--port", required=True); p_mkdir.add_argument("--path", required=True)
     p_rm = sub.add_parser("rm"); p_rm.add_argument("--port", required=True); p_rm.add_argument("--path", required=True)
     p_rmrf = sub.add_parser("rmrf"); p_rmrf.add_argument("--port", required=True); p_rmrf.add_argument("--path", required=True)
+    p_del_file = sub.add_parser("delete_file"); p_del_file.add_argument("--port", required=True); p_del_file.add_argument("--path", required=True)
+    p_del_folder = sub.add_parser("delete_folder_recursive"); p_del_folder.add_argument("--port", required=True); p_del_folder.add_argument("--path", required=True)
+    p_exists = sub.add_parser("file_exists"); p_exists.add_argument("--port", required=True); p_exists.add_argument("--path", required=True)
+    p_info = sub.add_parser("file_info"); p_info.add_argument("--port", required=True); p_info.add_argument("--path", required=True)
     p_cpf = sub.add_parser("cp_from"); p_cpf.add_argument("--port", required=True); p_cpf.add_argument("--src", required=True); p_cpf.add_argument("--dst", required=True)
     p_cpt = sub.add_parser("cp_to"); p_cpt.add_argument("--port", required=True); p_cpt.add_argument("--src", required=True); p_cpt.add_argument("--dst", required=True)
     p_upr = sub.add_parser("upload_replacing"); p_upr.add_argument("--port", required=True); p_upr.add_argument("--src", required=True); p_upr.add_argument("--dst", required=True)
     p_run = sub.add_parser("run_file"); p_run.add_argument("--port", required=True); p_run.add_argument("--src", required=True)
     p_res = sub.add_parser("reset"); p_res.add_argument("--port", required=True)
     p_tree = sub.add_parser("tree_stats"); p_tree.add_argument("--port", required=True); p_tree.add_argument("--path", required=True)
+    p_delete_all = sub.add_parser("delete_all_in_path"); p_delete_all.add_argument("--port", required=True); p_delete_all.add_argument("--path", required=True)
 
     args = ap.parse_args()
     if args.cmd == "devs":
@@ -299,6 +539,16 @@ def main():
         return cmd_reset(args.port)
     if args.cmd == "tree_stats":
         return cmd_tree_stats(args.port, args.path)
+    if args.cmd == "delete_file":
+        return cmd_delete_file(args.port, args.path)
+    if args.cmd == "delete_folder_recursive":
+        return cmd_delete_folder_recursive(args.port, args.path)
+    if args.cmd == "file_exists":
+        return cmd_file_exists(args.port, args.path)
+    if args.cmd == "file_info":
+        return cmd_file_info(args.port, args.path)
+    if args.cmd == "delete_all_in_path":
+        return cmd_delete_all_in_path(args.port, args.path)
 
 
 if __name__ == "__main__":

@@ -10,16 +10,23 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private rawListOnlyOnce = false;
 
-  refresh(): void { this._onDidChangeTreeData.fire(); }
+  refreshTree(): void { this._onDidChangeTreeData.fire(); }
+
+  getTreeItem(element: Esp32Node | "no-port"): vscode.TreeItem {
+    return this.getTreeItemForNode(element);
+  }
+
+  getChildren(element?: Esp32Node): Thenable<(Esp32Node | "no-port")[]> {
+    return Promise.resolve(this.getChildNodes(element));
+  }
 
   // When set, the next getChildren call will list directly,
   // skipping any auto-suspend/handshake commands.
-  setRawListOnlyOnce(): void { this.rawListOnlyOnce = true; }
+  enableRawListForNext(): void { this.rawListOnlyOnce = true; }
 
-  getTreeItem(element: Esp32Node | "no-port"): vscode.TreeItem {
+  getTreeItemForNode(element: Esp32Node | "no-port"): vscode.TreeItem {
     if (element === "no-port") {
       const item = new vscode.TreeItem("", vscode.TreeItemCollapsibleState.None);
-      item.description = "";
       item.command = {
         command: "mpyWorkbench.pickPort",
         title: "Select Port"
@@ -48,10 +55,10 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
     return item;
   }
 
-  async getChildren(element?: Esp32Node): Promise<(Esp32Node | "no-port")[]> {
+  async getChildNodes(element?: Esp32Node): Promise<(Esp32Node | "no-port")[]> {
     const port = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
     if (!port || port === "" || port === "auto") {
-      // Return empty to trigger the view's welcome content with a button
+      // No error: just return empty to trigger the view's welcome content with a button
       return [];
     }
     
@@ -60,22 +67,67 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
     try {
       let entries: { name: string; isDir: boolean }[] | undefined;
       const usePyRaw = vscode.workspace.getConfiguration().get<boolean>("mpyWorkbench.usePyRawList", false);
-      // Siempre listar pasando por autoSuspend para evitar conflictos con la terminal REPL
-      // Incluso si 'rawListOnlyOnce' estaba activo, no saltamos el auto-suspend para evitar que se "filtre" en miniterm
       this.rawListOnlyOnce = false;
       entries = await vscode.commands.executeCommand<{ name: string; isDir: boolean }[]>("mpyWorkbench.autoSuspendLs", path);
       if (!entries) {
-        // Fallback defensivo, igualmente con auto-suspend implícito vía comando ya usado
         entries = usePyRaw ? await listDirPyRaw(path) : await mp.lsTyped(path);
       }
+      
+      // Create nodes from board files
       const nodes: Esp32Node[] = entries.map(e => {
         const childPath = path === "/" ? `/${e.name}` : `${path}/${e.name}`;
         return { kind: e.isDir ? "dir" : "file", name: e.name, path: childPath };
       });
+      
+      // Add local-only files to the tree view
+      try {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (ws) {
+          // Access decorations via global reference
+          const decorations = (global as any).esp32Decorations;
+          if (decorations) {
+            const localOnlyFiles = decorations.getLocalOnly();
+            const currentPathPrefix = path === "/" ? "/" : path + "/";
+            
+            // Find local-only files that should appear in this directory
+            for (const localOnlyPath of localOnlyFiles) {
+              if (localOnlyPath.startsWith(currentPathPrefix)) {
+                const remainingPath = localOnlyPath.slice(currentPathPrefix.length);
+                // Only add direct children (no deeper nested paths)
+                if (remainingPath && !remainingPath.includes('/')) {
+                  // Check if this file/dir is not already in the board entries
+                  const alreadyExists = nodes.some(n => n.name === remainingPath);
+                  if (!alreadyExists) {
+                    // For now, assume local-only items are files (we could check the filesystem for more accuracy)
+                    nodes.push({ 
+                      kind: "file", 
+                      name: remainingPath, 
+                      path: localOnlyPath,
+                      isLocalOnly: true 
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Silently ignore errors when adding local-only files
+        console.log("Could not add local-only files to tree:", err);
+      }
+      
       nodes.sort((a,b) => (a.kind === b.kind) ? a.name.localeCompare(b.name) : (a.kind === "dir" ? -1 : 1));
       return nodes;
     } catch (err: any) {
-      vscode.window.showErrorMessage(`ESP32 list error at ${path}: ${err?.message ?? String(err)}`);
+      // Only show error if it's not a "no port selected" issue
+      const errorMessage = String(err?.message ?? err).toLowerCase();
+      const isPortError = errorMessage.includes("select a specific serial port") || 
+                         errorMessage.includes("serial port") ||
+                         errorMessage.includes("auto");
+      
+      if (!isPortError && port && port !== "" && port !== "auto") {
+        vscode.window.showErrorMessage(`ESP32 list error at ${path}: ${err?.message ?? String(err)}`);
+      }
       return [];
     }
   }
@@ -84,6 +136,7 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
     return vscode.Uri.joinPath(this.extUri(), "media", file);
   }
   private extUri() {
-    return vscode.extensions.getExtension("your-name.mpy-workbench")!.extensionUri;
+    // Use the actual publisher.name from package.json
+    return vscode.extensions.getExtension("DanielBucam.mpy-workbench")!.extensionUri;
   }
 }

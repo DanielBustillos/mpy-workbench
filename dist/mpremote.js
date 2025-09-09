@@ -4,11 +4,14 @@ exports.ls = ls;
 exports.lsTyped = lsTyped;
 exports.listSerialPorts = listSerialPorts;
 exports.mkdir = mkdir;
-exports.rm = rm;
 exports.cpFromDevice = cpFromDevice;
 exports.cpToDevice = cpToDevice;
 exports.uploadReplacing = uploadReplacing;
-exports.rmrf = rmrf;
+exports.deleteFile = deleteFile;
+exports.deleteFolderRecursive = deleteFolderRecursive;
+exports.fileExists = fileExists;
+exports.getFileInfo = getFileInfo;
+exports.deleteAllInPath = deleteAllInPath;
 exports.runFile = runFile;
 exports.reset = reset;
 exports.listTreeStats = listTreeStats;
@@ -24,9 +27,11 @@ function normalizeConnect(c) {
     return c;
 }
 function toolPath() {
-    const ext = vscode.extensions.getExtension("your-name.mpy-workbench");
-    if (!ext)
+    const ext = vscode.extensions.getExtension("DanielBucam.mpy-workbench");
+    if (!ext) {
+        vscode.window.showWarningMessage("No se encontró la extensión 'mpy-workbench'. Verifica el campo 'publisher' y 'name' en tu package.json.");
         throw new Error("Extension not found for tool path");
+    }
     return path.join(ext.extensionPath, "scripts", "pyserial_tool.py");
 }
 let currentChild = null;
@@ -67,9 +72,14 @@ async function lsTyped(p) {
 async function listSerialPorts() {
     try {
         const { stdout } = await runTool(["devs"]);
-        return String(stdout || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        const ports = String(stdout || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        if (ports.length === 0) {
+            vscode.window.showWarningMessage("No serial ports detected. Verifica que Python y pyserial estén instalados en el entorno usado por la extensión.");
+        }
+        return ports;
     }
-    catch {
+    catch (err) {
+        vscode.window.showWarningMessage("Error executing Python script to detect ports: " + (err?.message || err));
         return [];
     }
 }
@@ -78,12 +88,6 @@ async function mkdir(p) {
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
     await runTool(["mkdir", "--port", connect, "--path", p]);
-}
-async function rm(p) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
-    if (!connect || connect === "auto")
-        throw new Error("Select a specific serial port first");
-    await runTool(["rm", "--port", connect, "--path", p]);
 }
 async function cpFromDevice(devicePath, localPath) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
@@ -101,13 +105,132 @@ async function uploadReplacing(localPath, devicePath) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
+    // Check if the local path is a directory before attempting upload
+    const fs = require('node:fs/promises');
+    try {
+        const stats = await fs.stat(localPath);
+        if (stats.isDirectory()) {
+            throw new Error(`Cannot upload directory '${localPath}' as file. Expected a file path.`);
+        }
+    }
+    catch (err) {
+        if (err.code === 'ENOENT') {
+            throw new Error(`File not found: '${localPath}'`);
+        }
+        if (err.message.includes('Cannot upload directory')) {
+            throw err; // Re-throw our custom error
+        }
+        // For other stat errors, continue anyway and let the Python script handle it
+    }
     await runTool(["upload_replacing", "--port", connect, "--src", localPath, "--dst", devicePath]);
 }
-async function rmrf(p) {
+async function deleteFile(p) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
-    await runTool(["rmrf", "--port", connect, "--path", p]);
+    // First check if it's a file or directory
+    try {
+        const info = await runTool(["file_info", "--port", connect, "--path", p]);
+        if (info.stdout.includes("|dir|")) {
+            // It's a directory, use delete_folder_recursive
+            await runTool(["delete_folder_recursive", "--port", connect, "--path", p]);
+        }
+        else {
+            // It's a file, use delete_file
+            await runTool(["delete_file", "--port", connect, "--path", p]);
+        }
+    }
+    catch (error) {
+        // If we can't get info, try as file first
+        await runTool(["delete_file", "--port", connect, "--path", p]);
+    }
+}
+async function deleteFolderRecursive(p) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    await runTool(["delete_folder_recursive", "--port", connect, "--path", p]);
+}
+async function fileExists(p) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    try {
+        const result = await runTool(["file_exists", "--port", connect, "--path", p]);
+        const output = result.stdout.trim();
+        return output === "exists";
+    }
+    catch (error) {
+        // If there are serial connection errors, assume the file does not exist
+        // ya que no podemos verificar su estado
+        const errorStr = String(error?.message || error).toLowerCase();
+        if (errorStr.includes("serialexception") ||
+            errorStr.includes("device not configured") ||
+            errorStr.includes("no such file or directory")) {
+            console.warn(`Serial connection error during file check: ${errorStr}`);
+            return false;
+        }
+        return false;
+    }
+}
+async function getFileInfo(p) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    try {
+        const result = await runTool(["file_info", "--port", connect, "--path", p]);
+        const parts = result.stdout.split("|");
+        if (parts.length >= 4) {
+            return {
+                mode: parseInt(parts[0]),
+                size: parseInt(parts[1]),
+                isDir: parts[2] === "dir",
+                isReadonly: parts[3] === "ro"
+            };
+        }
+        return null;
+    }
+    catch (error) {
+        return null;
+    }
+}
+async function deleteAllInPath(rootPath) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    const deleted = [];
+    const errors = [];
+    try {
+        // Get list of all files and folders
+        const items = await listTreeStats(rootPath);
+        // Group by folders and files, sort to delete files first, then folders (from deepest)
+        const files = items.filter(item => !item.isDir);
+        const dirs = items.filter(item => item.isDir).sort((a, b) => b.path.length - a.path.length); // Deepest first
+        // Delete files first
+        for (const file of files) {
+            try {
+                await runTool(["delete_file", "--port", connect, "--path", file.path]);
+                deleted.push(file.path);
+            }
+            catch (error) {
+                errors.push(`File ${file.path}: ${error?.message ?? String(error)}`);
+            }
+        }
+        // Delete folders (from deepest)
+        for (const dir of dirs) {
+            try {
+                await runTool(["delete_folder_recursive", "--port", connect, "--path", dir.path]);
+                deleted.push(dir.path);
+            }
+            catch (error) {
+                errors.push(`Directory ${dir.path}: ${error?.message ?? String(error)}`);
+            }
+        }
+    }
+    catch (error) {
+        errors.push(`Failed to list directory contents: ${error?.message ?? String(error)}`);
+    }
+    return { deleted, errors };
 }
 async function runFile(localPath) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");

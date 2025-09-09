@@ -7,8 +7,14 @@ class ActionsTree {
         this._onDidChangeTreeData = new vscode.EventEmitter();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
     }
-    refresh() { this._onDidChangeTreeData.fire(); }
+    refreshTree() { this._onDidChangeTreeData.fire(); }
     getTreeItem(element) {
+        return this.getTreeItemForAction(element);
+    }
+    getChildren() {
+        return Promise.resolve(this.getActionNodes());
+    }
+    getTreeItemForAction(element) {
         const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
         item.contextValue = "action";
         // Route via a wrapper so clicking in the view won't trigger kill/ctrl-c pre-ops
@@ -43,13 +49,12 @@ class ActionsTree {
         }
         return item;
     }
-    async getChildren() {
+    async getActionNodes() {
         return [
             { id: "runActive", label: "Run Active File", command: "mpyWorkbench.runActiveFile" },
             { id: "openRepl", label: "Open REPL Terminal", command: "mpyWorkbench.openRepl" },
             { id: "stop", label: "Stop (Ctrl-C, Ctrl-A, Ctrl-D)", command: "mpyWorkbench.stop" },
-            { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" },
-            { id: "killUsers", label: "Close other port services", command: "mpyWorkbench.killPortUsers" }
+            { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" }
         ];
     }
 }

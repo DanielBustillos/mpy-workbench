@@ -7,8 +7,14 @@ class SyncTree {
         this._onDidChangeTreeData = new vscode.EventEmitter();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
     }
-    refresh() { this._onDidChangeTreeData.fire(); }
+    refreshTree() { this._onDidChangeTreeData.fire(); }
     getTreeItem(element) {
+        return this.getTreeItemForAction(element);
+    }
+    getChildren() {
+        return Promise.resolve(this.getActionNodes());
+    }
+    getTreeItemForAction(element) {
         const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
         item.command = { command: "mpyWorkbench.runFromView", title: element.label, arguments: [element.command] };
         if (element.id === "baseline")
@@ -21,15 +27,18 @@ class SyncTree {
             item.iconPath = new vscode.ThemeIcon("cloud-upload");
         if (element.id === "syncDiffsBoardToLocal")
             item.iconPath = new vscode.ThemeIcon("cloud-download");
+        if (element.id === "deleteAllBoard")
+            item.iconPath = new vscode.ThemeIcon("trash", new vscode.ThemeColor("charts.red"));
         return item;
     }
-    async getChildren() {
+    async getActionNodes() {
         return [
-            { id: "baseline", label: "Sync all files (Local → Board)", command: "mpyWorkbench.syncBaseline" },
-            { id: "baselineFromBoard", label: "Sync all files (Board → Local)", command: "mpyWorkbench.syncBaselineFromBoard" },
-            { id: "checkDiffs", label: "Check files differences", command: "mpyWorkbench.checkDiffs" },
+            { id: "baseline", label: "Upload all files (Local → Board)", command: "mpyWorkbench.syncBaseline" },
+            { id: "baselineFromBoard", label: "Download all files (Board → Local)", command: "mpyWorkbench.syncBaselineFromBoard" },
+            { id: "checkDiffs", label: "Check for differences (local vs board)", command: "mpyWorkbench.checkDiffs" },
             { id: "syncDiffsLocalToBoard", label: "Sync changed Files Local → Board", command: "mpyWorkbench.syncDiffsLocalToBoard" },
-            { id: "syncDiffsBoardToLocal", label: "Sync changed Files Board → Local", command: "mpyWorkbench.syncDiffsBoardToLocal" }
+            { id: "syncDiffsBoardToLocal", label: "Sync changed Files Board → Local", command: "mpyWorkbench.syncDiffsBoardToLocal" },
+            { id: "deleteAllBoard", label: "Delete ALL files on Board", command: "mpyWorkbench.deleteAllBoard" }
         ];
     }
 }
