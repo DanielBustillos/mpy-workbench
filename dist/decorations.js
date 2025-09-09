@@ -20,6 +20,8 @@ class Esp32DecorationProvider {
     clear() {
         this.diffSet.clear();
         this.localOnlySet.clear();
+        this._originalDiffs = undefined;
+        this._originalLocalOnly = undefined;
         this._onDidChange.fire(undefined);
     }
     getDiffs() {
@@ -27,6 +29,13 @@ class Esp32DecorationProvider {
     }
     getLocalOnly() {
         return Array.from(this.localOnlySet);
+    }
+    // Get only files (no parent directories) for sync operations
+    getDiffsFilesOnly() {
+        return Array.from(this._originalDiffs || this.diffSet);
+    }
+    getLocalOnlyFilesOnly() {
+        return Array.from(this._originalLocalOnly || this.localOnlySet);
     }
     provideFileDecoration(uri) {
         if (uri.scheme !== 'esp32')

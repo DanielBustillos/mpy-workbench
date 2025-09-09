@@ -3,12 +3,18 @@
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via raw REPL (pyserial).",
-  "version": "0.0.4",
+  "version": "0.0.7",
   "publisher": "DanielBucam",
   "engines": { "vscode": "^1.84.0" },
   "categories": [
     "Programming Languages",
     "Debuggers"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onView:mpyWorkbenchFsView",
+    "onView:mpyWorkbenchActionsView",
+    "onView:mpyWorkbenchSyncView"
   ],
 
   "contributes": {
@@ -37,6 +43,7 @@
   { "command": "mpyWorkbench.refresh", "title": "MPY Workbench: Refresh", "icon": "$(refresh)" },
   { "command": "mpyWorkbench.openFile", "title": "MPY Workbench: Open File" },
   { "command": "mpyWorkbench.uploadActiveFile", "title": "MPY Workbench: Upload Active File" },
+  { "command": "mpyWorkbench.newFileBoardAndLocal", "title": "MPY Workbench: New File (Board + Local)", "icon": "$(new-file)" },
   { "command": "mpyWorkbench.pickPort", "title": "MPY Workbench: Select Serial Port", "icon": "$(plug)" },
   { "command": "mpyWorkbench.refreshPorts", "title": "MPY Workbench: Refresh Ports", "icon": "$(refresh)" },
   { "command": "mpyWorkbench.setPort", "title": "MPY Workbench: Use This Port" },
@@ -65,16 +72,13 @@
   { "command": "mpyWorkbench.runActiveFileFromView", "title": "MPY Workbench: Run Active File (View)", "icon": "$(play)" },
   { "command": "mpyWorkbench.openReplFromView", "title": "MPY Workbench: Open REPL (View)", "icon": "$(terminal)" },
   { "command": "mpyWorkbench.deleteAllBoard", "title": "MPY Workbench: Delete ALL files on Board", "icon": { "light": "./media/trash-red.svg", "dark": "./media/trash-red.svg" } },
-  { "command": "mpyWorkbench.deleteAllBoardFromView", "title": "MPY Workbench: Delete ALL files on Board (View)", "icon": { "light": "./media/trash-red.svg", "dark": "./media/trash-red.svg" } },
-  { "command": "mpyWorkbench.toggleAutoSync", "title": "Auto Sync: ON", "icon": "$(sync)" },
-  { "command": "mpyWorkbench.toggleAutoSyncOff", "title": "Auto Sync: OFF", "icon": "$(sync-ignored)" }
+  { "command": "mpyWorkbench.deleteAllBoardFromView", "title": "MPY Workbench: Delete ALL files on Board (View)", "icon": { "light": "./media/trash-red.svg", "dark": "./media/trash-red.svg" } }
+  ,{ "command": "mpyWorkbench.toggleWorkspaceAutoSync", "title": "MPY Workbench: Toggle workspace Auto-Sync on Save" }
     ],
     "menus": {
       "view/title": [
-        { "command": "mpyWorkbench.toggleAutoSyncOff", "when": "view == mpyWorkbenchSyncView && !mpyWorkbench.autoSyncEnabled", "group": "navigation@0" },
-        { "command": "mpyWorkbench.toggleAutoSync", "when": "view == mpyWorkbenchSyncView && mpyWorkbench.autoSyncEnabled", "group": "navigation@0" },
-        { "command": "mpyWorkbench.syncBaselineFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@1" },
-        { "command": "mpyWorkbench.syncBaselineFromBoardFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@2" },
+        { "command": "mpyWorkbench.syncBaselineFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@0" },
+        { "command": "mpyWorkbench.syncBaselineFromBoardFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@1" },
         { "command": "mpyWorkbench.checkDiffsFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@3" },
         { "command": "mpyWorkbench.syncDiffsLocalToBoardFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@4" },
         { "command": "mpyWorkbench.syncDiffsBoardToLocalFromView", "when": "view == mpyWorkbenchSyncView", "group": "navigation@5" },
@@ -88,11 +92,12 @@
       ],
       "view/item/context": [
         { "command": "mpyWorkbench.openFile", "when": "view == mpyWorkbenchFsView && viewItem == file", "group": "1_open@1" },
-  { "command": "mpyWorkbench.openFileFromLocal", "when": "view == mpyWorkbenchFsView && viewItem == file", "group": "1_open@2" },
+        { "command": "mpyWorkbench.openFileFromLocal", "when": "view == mpyWorkbenchFsView && viewItem == file", "group": "1_open@2" },
         { "command": "mpyWorkbench.syncFileLocalToBoard", "when": "view == mpyWorkbenchFsView && viewItem == file", "group": "2_sync@1" },
         { "command": "mpyWorkbench.syncFileBoardToLocal", "when": "view == mpyWorkbenchFsView && viewItem == file", "group": "2_sync@2" },
         { "command": "mpyWorkbench.delete", "when": "view == mpyWorkbenchFsView && (viewItem == file || viewItem == dir)", "group": "3_delete@1" },
-        { "command": "mpyWorkbench.deleteBoardAndLocal", "when": "view == mpyWorkbenchFsView && (viewItem == file || viewItem == dir)", "group": "3_delete@2" }
+        { "command": "mpyWorkbench.deleteBoardAndLocal", "when": "view == mpyWorkbenchFsView && (viewItem == file || viewItem == dir)", "group": "3_delete@2" },
+        { "command": "mpyWorkbench.newFileBoardAndLocal", "when": "view == mpyWorkbenchFsView && !viewItem", "group": "0_create@0" }
       ]
     },
     "configuration": {
@@ -101,8 +106,8 @@
       "properties": {
         "mpyWorkbench.autoSyncOnSave": {
           "type": "boolean",
-          "default": true,
-          "description": "Sincronizar automáticamente al guardar: si está activado, al guardar un archivo local también se sube al board; si está desactivado, solo se guarda en local."
+          "default": false,
+          "description": "Sincronizar automáticamente al guardar: si está activado, al guardar un archivo local también se sube al board; si está desactivado, solo se guarda en local. Per-workspace override available in .mpystudio/config.json."
         },
         "mpyWorkbench.connect": {
           "type": "string",

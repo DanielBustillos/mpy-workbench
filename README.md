@@ -1,72 +1,57 @@
-# Micropython File Explorer for Visual Studio Code
+# MPY Workbench — MicroPython file manager for VS Code
 
-Inspired by Thonny's simple functionality, this extension improves the workflow by adding effortless two-way sync between board and local files.
-
-Boost your ESP32 MicroPython development with seamless file management and instant synchronization. Edit, upload, and sync files effortlessly between your local workspace and ESP32 board—all within Visual Studio Code.
-
----
+MPY Workbench provides fast two-way file sync and simple file management for MicroPython boards (ESP32 and similar) from inside Visual Studio Code.
 
 ## Features
 
-- 📂 **File Explorer** – Easily browse, upload, download, rename, and delete files on your ESP32.  
-- 🔄 **Two-Way Sync** – Changes are synced instantly between your PC and device, speeding up development.  
-- ⚡ **Auto-Sync on Save** – Save files locally and automatically update them on the ESP32.  
-- 💻 **Integrated REPL Terminal** – Access the MicroPython REPL directly inside VS Code.  
-- 📡 **Serial Monitor** – View device logs and output in real-time.  
-- ⚙️ **Customizable Settings** – Tailor sync behavior, root paths, and serial port options to your workflow.  
-
----
+- File explorer for remote device files (list, open, upload, download, rename, delete)
+- Two-way sync (Local ↔ Board), including a "check differences" workflow
+- Optional auto-upload on save (workspace-level override stored in `.mpy-workbench/config.json`)
+- Integrated REPL terminal and serial monitor
+- Customizable settings (root path, serial options, auto-suspend behavior)
 
 ## Requirements
 
-- Python 3 installed on your system.  
-- [`pyserial`](https://pypi.org/project/pyserial/) (`pip install pyserial`).  
-- ESP32 board running [MicroPython firmware](https://micropython.org/download/esp32/).  
+- Python 3 and the `pyserial` package available to the Python used by VS Code
+- A MicroPython build on your device (ESP32 builds available at micropython.org)
 
----
+## Quick start
 
-## Installation
+1. Install the extension from the VS Code Marketplace or side-load the built `.vsix`.
+2. Connect the device and select the serial port (Command Palette → "MPY Workbench: Select Serial Port").
+3. Open the "MPY Workbench" view in the Activity Bar to browse files.
 
-1. Install **ESP32 Files Explorer** from the [Visual Studio Code Marketplace](https://marketplace.visualstudio.com/).  
-2. Connect your ESP32 device via USB.  
-3. Open the **ESP32 Files** view from the Activity Bar.  
+## Auto-sync on save
 
----
+The global setting `mpyWorkbench.autoSyncOnSave` defaults to `false`. To enable auto-sync only for the current workspace create or toggle a per-workspace setting at `.mpy-workbench/config.json` (the extension provides the command "MPY Workbench: Toggle workspace Auto-Sync on Save"). The extension will consult that file first; if not present it falls back to the global setting.
 
-## Usage
+## Commands (Command Palette)
 
-### Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+- MPY Workbench: Refresh — refresh the file tree
+- MPY Workbench: Check files differences — compare local and board files
+- MPY Workbench: Sync changed Files (Local → Board)
+- MPY Workbench: Sync changed Files (Board → Local)
+- MPY Workbench: Sync all files — full upload or download
+- MPY Workbench: Upload Active File — upload current editor file
+- MPY Workbench: Select Serial Port — pick device port
+- MPY Workbench: Open REPL Terminal — open MicroPython REPL
 
-- `ESP32: Refresh` – Refresh the file explorer view.  
-- `ESP32: Open File` – Open files from the ESP32 board.  
-- `ESP32: Upload Active File` – Upload the current file to the device.  
-- `ESP32: Sync All Files` – Perform a full synchronization.  
-- `ESP32: Select Serial Port` – Choose the communication port.  
-- `ESP32: Open REPL Terminal` – Launch the MicroPython REPL.  
+## Configuration
 
-### Explorer View
+Most configuration is available under the `MPY Workbench` settings in VS Code. Important options:
 
-- Manage files directly from the **ESP32 Files** panel: upload, download, rename, and delete.  
-
----
-
-## Extension Settings
-
-Configure the extension to fit your workflow:
-
-- `esp32fs.autoSyncOnSave` (default: `true`) – Automatically sync files on save.  
-- `esp32fs.rootPath` (default: `/`) – Root directory on the device.  
-- `esp32fs.serialAutoSuspend` (default: `true`) – Auto-close REPL before file operations.  
-- `esp32fs.interruptOnConnect` (default: `true`) – Send Ctrl-C on connection to interrupt running code.  
-
----
+- `mpyWorkbench.autoSyncOnSave` — global default for auto-upload-on-save (default: `false`)
+- `mpyWorkbench.rootPath` — root path on the device (default: `/`)
+- `mpyWorkbench.serialAutoSuspend` — close REPL before file ops (default: `true`)
 
 ## Contributing
 
-Contributions, issues, and feature requests are welcome! Visit the [GitHub repository](https://github.com/your-repo/esp32-files-explorer) to get involved.  
-
----
+Issues and pull requests are welcome. See the repository for development notes and packaging instructions.
 
 ## License
 
-[MIT License](LICENSE)
+MIT — see the `LICENSE` file in this repository.
+
+## Known issues
+
+- Serial connections can be flaky: if an operation fails due to a transient serial error, retrying the command often succeeds. Ensure the correct serial port is selected and close other serial monitors if necessary.

@@ -19,14 +19,78 @@ function toolPath(): string {
 
 let currentChild: ChildProcess | null = null;
 
+let lastDisconnectNotice = 0;
+const DISCONNECT_COOLDOWN_MS = 6000;
+let suppressSerialNotices = false;
+
+export function setSerialNoticeSuppressed(s: boolean): void {
+  suppressSerialNotices = s;
+}
+
+function isDisconnectMessage(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("device disconnected") ||
+    m.includes("serial read returned no data") ||
+    m.includes("device reports readiness to read") ||
+    m.includes("device not configured") ||
+    m.includes("serial device not available") ||
+    m.includes("no such file or directory") ||
+    m.includes("serial port not found")
+  );
+}
+
+function isBusyMessage(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("resource busy") ||
+    m.includes("permission denied") ||
+    m.includes("port is already open") ||
+    m.includes("busy or permission denied") ||
+    m.includes("could not open port") ||
+    m.includes("could not open serial port")
+  );
+}
+
+function maybeNotifySerialStatus(msg: string): void {
+  if (suppressSerialNotices) return;
+  const busy = isBusyMessage(msg);
+  const disc = isDisconnectMessage(msg);
+  if (!busy && !disc) return;
+  const now = Date.now();
+  if (now - lastDisconnectNotice < DISCONNECT_COOLDOWN_MS) return;
+  lastDisconnectNotice = now;
+  if (busy) {
+    vscode.window.showWarningMessage(
+      "Puerto serie ocupado o sin permisos. Cierra otros monitores (Arduino, Thonny, miniterm) o revisa permisos."
+    );
+  } else {
+    vscode.window.showWarningMessage(
+      "ESP32 desconectado o puerto no disponible. Verifica cable/alimentación y vuelve a seleccionar el puerto."
+    );
+  }
+}
+
 function runTool(args: string[], opts: { cwd?: string } = {}): Promise<{ stdout: string; stderr: string }>{
   return new Promise((resolve, reject) => {
-    const child = execFile("python3", [toolPath(), ...args], { cwd: opts.cwd }, (err, stdout, stderr) => {
-      if (currentChild === child) currentChild = null;
-      if (err) return reject(new Error(stderr || err?.message || "tool error"));
-      resolve({ stdout: String(stdout), stderr: String(stderr) });
-    });
-    currentChild = child;
+    const execOnce = (attempt: number) => {
+      const child = execFile("python3", [toolPath(), ...args], { cwd: opts.cwd }, (err, stdout, stderr) => {
+        if (currentChild === child) currentChild = null;
+        if (err) {
+          const emsg = String(stderr || err?.message || "");
+          // One-shot retry for transient disconnect/busy right after port handoff
+          if (attempt === 0 && isDisconnectMessage(emsg)) {
+            setTimeout(() => execOnce(1), 300);
+            return;
+          }
+          maybeNotifySerialStatus(emsg);
+          return reject(new Error(emsg || "tool error"));
+        }
+        resolve({ stdout: String(stdout), stderr: String(stderr) });
+      });
+      currentChild = child;
+    };
+    execOnce(0);
   });
 }
 
@@ -82,24 +146,6 @@ export async function cpToDevice(localPath: string, devicePath: string): Promise
 export async function uploadReplacing(localPath: string, devicePath: string): Promise<void> {
   const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
   if (!connect || connect === "auto") throw new Error("Select a specific serial port first");
-  
-  // Check if the local path is a directory before attempting upload
-  const fs = require('node:fs/promises');
-  try {
-    const stats = await fs.stat(localPath);
-    if (stats.isDirectory()) {
-      throw new Error(`Cannot upload directory '${localPath}' as file. Expected a file path.`);
-    }
-  } catch (err: any) {
-    if (err.code === 'ENOENT') {
-      throw new Error(`File not found: '${localPath}'`);
-    }
-    if (err.message.includes('Cannot upload directory')) {
-      throw err; // Re-throw our custom error
-    }
-    // For other stat errors, continue anyway and let the Python script handle it
-  }
-  
   await runTool(["upload_replacing", "--port", connect, "--src", localPath, "--dst", devicePath]);
 }
 

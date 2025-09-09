@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { Esp32Node } from "./types";
 import * as mp from "./mpremote";
 import { listDirPyRaw } from "./pyraw";
+import { createIgnoreMatcher } from "./sync";
 
 type TreeNode = Esp32Node | "no-port";
 
@@ -78,6 +79,28 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
         const childPath = path === "/" ? `/${e.name}` : `${path}/${e.name}`;
         return { kind: e.isDir ? "dir" : "file", name: e.name, path: childPath };
       });
+      
+      // Apply ignore rules (from workspace .mpyignore and .mpy-workbench/.mpyignore)
+      try {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (ws) {
+          const matcher = await createIgnoreMatcher(ws.uri.fsPath);
+          const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+          const filtered = nodes.filter(n => {
+            const isDir = n.kind === 'dir';
+            // Convert device path to local-relative path for matching
+            const normRoot = rootPath === '/' ? '/' : rootPath.replace(/\/$/, '');
+            let rel: string;
+            if (normRoot === '/') rel = n.path.replace(/^\//, '');
+            else if (n.path.startsWith(normRoot + '/')) rel = n.path.slice(normRoot.length + 1);
+            else if (n.path === normRoot) rel = '';
+            else rel = n.path.replace(/^\//, '');
+            return !matcher(rel, isDir);
+          });
+          nodes.length = 0;
+          nodes.push(...filtered);
+        }
+      } catch {}
       
       // Add local-only files to the tree view
       try {

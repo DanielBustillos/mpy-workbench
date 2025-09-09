@@ -11,15 +11,22 @@ export interface Manifest {
   files: Record<string, ManifestEntry>; // posix-style relative paths
 }
 
-export async function buildManifest(rootDir: string, ignore: Set<string>): Promise<Manifest> {
+export type IgnoreMatcher = (relPath: string, isDir: boolean) => boolean;
+
+export async function buildManifest(rootDir: string, ignore: IgnoreMatcher | Set<string>): Promise<Manifest> {
+  const matcher: IgnoreMatcher = (typeof ignore === 'function')
+    ? ignore as IgnoreMatcher
+    : ((rel, isDir) => (ignore as Set<string>).has(rel.split('/').pop() || rel));
+
   const files: Record<string, ManifestEntry> = {};
   async function walk(dir: string, relBase = ""): Promise<void> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const e of entries) {
-      if (ignore.has(e.name)) continue;
-      const abs = path.join(dir, e.name);
       const rel = path.posix.join(relBase, e.name);
-      if (e.isDirectory()) {
+      const abs = path.join(dir, e.name);
+      const isDir = e.isDirectory();
+      if (matcher(rel, isDir)) continue;
+      if (isDir) {
         await walk(abs, rel);
       } else if (e.isFile()) {
         const st = await fs.stat(abs);
@@ -59,7 +66,64 @@ export function cloneManifestWithNewId(m: Manifest, newId: string): Manifest {
   return { ...m, syncId: newId, generatedAt: Date.now() };
 }
 
-export function defaultIgnore(): Set<string> {
-  return new Set([".git", ".vscode", "node_modules", "dist", "out", "build", "__pycache__", ".DS_Store"]);
+export function defaultIgnorePatterns(): string[] {
+  return [
+    ".git/",
+    ".vscode/",
+    "node_modules/",
+    "dist/",
+    "out/",
+    "build/",
+    "__pycache__/",
+    ".DS_Store",
+  ".mpy-workbench/",
+    ".mpyignore"
+  ];
 }
 
+function globToRegExp(pat: string): RegExp {
+  // basics: * => [^/]*, ** => .* , ? => [^/]
+  let pattern = pat.trim();
+  const anchorRoot = pattern.startsWith('/');
+  if (anchorRoot) pattern = pattern.slice(1);
+  // Escape regex special chars EXCEPT glob tokens (*, ?, /)
+  pattern = pattern.replace(/([.+^${}()|\[\]\\])/g, '\\$1');
+  // Replace ** first
+  pattern = pattern.replace(/\*\*/g, '.*');
+  // Then * and ?
+  pattern = pattern.replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]');
+  const trailingSlash = pattern.endsWith('/');
+  const core = trailingSlash ? pattern.slice(0, -1) : pattern;
+  const prefix = anchorRoot ? '^' : '(^|.*/)';
+  const suffix = trailingSlash ? '(?:/.*)?$' : '$';
+  return new RegExp(prefix + core + suffix);
+}
+
+export async function createIgnoreMatcher(rootDir: string): Promise<IgnoreMatcher> {
+  const defaults = defaultIgnorePatterns();
+  let extra: string[] = [];
+  // Read workspace root ignore file
+  try {
+    const txt = await fs.readFile(path.join(rootDir, '.mpyignore'), 'utf8');
+    extra.push(
+      ...txt.split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('#'))
+    );
+  } catch {}
+  // Read workbench-local ignore file inside .mpy-workbench
+  try {
+    const txt2 = await fs.readFile(path.join(rootDir, '.mpy-workbench', '.mpyignore'), 'utf8');
+    extra.push(
+      ...txt2.split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('#'))
+    );
+  } catch {}
+  const patterns = [...defaults, ...extra];
+  const regs = patterns.map(globToRegExp);
+  return (relPath: string, isDir: boolean) => {
+    const p = relPath.replace(/\\/g, '/');
+    return regs.some(r => r.test(p));
+  };
+}

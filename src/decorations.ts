@@ -20,6 +20,8 @@ export class Esp32DecorationProvider implements vscode.FileDecorationProvider {
   clear() {
     this.diffSet.clear();
     this.localOnlySet.clear();
+    (this as any)._originalDiffs = undefined;
+    (this as any)._originalLocalOnly = undefined;
     this._onDidChange.fire(undefined);
   }
 
@@ -29,6 +31,15 @@ export class Esp32DecorationProvider implements vscode.FileDecorationProvider {
 
   getLocalOnly(): string[] {
     return Array.from(this.localOnlySet);
+  }
+
+  // Get only files (no parent directories) for sync operations
+  getDiffsFilesOnly(): string[] {
+    return Array.from((this as any)._originalDiffs || this.diffSet);
+  }
+
+  getLocalOnlyFilesOnly(): string[] {
+    return Array.from((this as any)._originalLocalOnly || this.localOnlySet);
   }
 
   provideFileDecoration(uri: vscode.Uri): vscode.ProviderResult<vscode.FileDecoration> {

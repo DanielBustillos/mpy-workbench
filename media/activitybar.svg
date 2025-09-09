@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <!-- Simple microcontroller/board glyph -->
+  <rect x="6" y="5" width="12" height="14" rx="2"/>
+  <!-- Left pins -->
+  <rect x="3" y="7" width="2" height="2"/>
+  <rect x="3" y="11" width="2" height="2"/>
+  <rect x="3" y="15" width="2" height="2"/>
+  <!-- Right pins -->
+  <rect x="19" y="7" width="2" height="2"/>
+  <rect x="19" y="11" width="2" height="2"/>
+  <rect x="19" y="15" width="2" height="2"/>
+  <!-- Chip detail -->
+  <rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+</svg>

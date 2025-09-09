@@ -1,6 +1,5 @@
 # Fuentes y configs que no necesita el usuario
 src/**
-scripts/**
 tsconfig.json
 .vscode/**
 .git/**
@@ -12,6 +11,7 @@ node_modules/**
 # Mantén solo lo necesario
 !dist/**
 !media/**
+!scripts/**
 !readme.md
 !changelog.md
 !license*

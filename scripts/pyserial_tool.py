@@ -12,6 +12,9 @@ BAUD = 115200
 
 
 def open_ser(port):
+    """Open a serial port with a sane timeout.
+    Separating this allows us to centralize any future tweaks (e.g., DTR/RTS).
+    """
     return serial.Serial(port, BAUD, timeout=2)
 
 
@@ -29,13 +32,21 @@ def raw_exit(ser):
 
 
 def raw_exec(ser, code, wait_marker=True):
+    """Execute code in raw REPL and collect output.
+    Handles transient read errors more gracefully and stops on marker.
+    """
     data = code.encode("utf-8") + b"\x04"
     ser.write(data)
     out = b""
     deadline = time.time() + 8.0
     if wait_marker:
         while time.time() < deadline:
-            chunk = ser.read(1024)
+            try:
+                chunk = ser.read(1024)
+            except serial.SerialException as e:
+                # Raise a clearer message; upstream will catch and surface nicely
+                raise serial.SerialException(
+                    f"serial-read-failed: {e}") from e
             if chunk:
                 out += chunk
                 if b"<thonny>" in out and b"</thonny>" in out:
@@ -44,7 +55,10 @@ def raw_exec(ser, code, wait_marker=True):
                 time.sleep(0.02)
     else:
         time.sleep(0.2)
-        out += ser.read_all()
+        try:
+            out += ser.read_all()
+        except serial.SerialException as e:
+            raise serial.SerialException(f"serial-read-failed: {e}") from e
     return out
 
 
@@ -264,10 +278,6 @@ def cmd_cp_from(port, src, dst):
 
 
 def cmd_cp_to(port, src, dst):
-    import os
-    if os.path.isdir(src):
-        raise ValueError(f"Cannot upload directory '{src}' as file. Use recursive directory upload instead.")
-    
     with open(src, "rb") as f:
         data = f.read()
     b = base64.b64encode(data).decode()
@@ -292,10 +302,6 @@ def cmd_cp_to(port, src, dst):
 
 
 def cmd_upload_replacing(port, src, dst):
-    import os
-    if os.path.isdir(src):
-        raise ValueError(f"Cannot upload directory '{src}' as file. Use recursive directory upload instead.")
-    
     tmp = dst + ".new"
     cmd_cp_to(port, src, tmp)
     code = (
@@ -551,6 +557,62 @@ def main():
         return cmd_delete_all_in_path(args.port, args.path)
 
 
-if __name__ == "__main__":
-    main()
+def _friendly_os_error(e: OSError) -> str:
+    # Map common OS-level issues to concise, user-friendly messages
+    msg = str(e)
+    eno = getattr(e, 'errno', None)
+    if eno == 2 or 'No such file or directory' in msg:
+        return "Serial port not found. Select the correct port."
+    if eno in (13, 16) or 'Permission denied' in msg or 'Resource busy' in msg:
+        return "Serial port busy or permission denied. Close other serial monitors (Arduino, Thonny, miniterm)."
+    if 'Device not configured' in msg or 'Input/output error' in msg or 'could not open port' in msg:
+        return "Serial device not available. Reconnect the board or check the cable."
+    return f"OS error: {msg}"
 
+
+def _friendly_serial_error(e: Exception) -> str:
+    msg = str(e)
+    low = msg.lower()
+    if 'readiness to read' in low and 'no data' in low:
+        return "Serial read returned no data. Device disconnected or port used by another program."
+    if 'port is already open' in low:
+        return "Port already open. Close other tools using the port."
+    if 'could not open port' in low:
+        return "Could not open serial port. Check permissions and availability."
+    return f"Serial error: {msg}"
+
+
+if __name__ == "__main__":
+    # Top-level guard to avoid long Python tracebacks surfacing in VS Code.
+    # Print concise, actionable messages instead. Enable full tracebacks by
+    # setting MPY_WORKBENCH_DEBUG=1 in the environment.
+    debug = os.environ.get("MPY_WORKBENCH_DEBUG") == "1"
+    try:
+        main()
+    except serial.SerialException as e:
+        msg = _friendly_serial_error(e)
+        if debug:
+            raise
+        sys.stderr.write(msg)
+        sys.exit(2)
+    except FileNotFoundError as e:  # e.g., python can't find device file
+        if debug:
+            raise
+        sys.stderr.write("Serial port not found. Select the correct port.")
+        sys.exit(2)
+    except PermissionError as e:
+        if debug:
+            raise
+        sys.stderr.write("Permission denied opening serial port. Close other tools and/or adjust permissions.")
+        sys.exit(2)
+    except OSError as e:
+        if debug:
+            raise
+        sys.stderr.write(_friendly_os_error(e))
+        sys.exit(2)
+    except Exception as e:
+        if debug:
+            raise
+        # Fallback generic error
+        sys.stderr.write(f"Unexpected error: {e}")
+        sys.exit(1)
