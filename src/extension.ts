@@ -1197,12 +1197,27 @@ async function getReplTerminal(context: vscode.ExtensionContext): Promise<vscode
   }
   const connect = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
   const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-  // Usar miniterm directamente para mantener interactividad completa
-  replTerminal = vscode.window.createTerminal({
-    name: "ESP32 REPL",
-    shellPath: "python3",
-    shellArgs: ["-m", "serial.tools.miniterm", device, "115200"]
-  });
+  // Ejecutar miniterm dentro de un shell para que, al terminar/desconectarse,
+  // el terminal permanezca abierto y permita ver los últimos mensajes.
+  const isWindows = process.platform === 'win32';
+  if (isWindows) {
+    // En Windows: usar cmd con pausa al final
+    const cmd = `python -m serial.tools.miniterm ${device} 115200 & echo. & echo REPL terminado — presiona una tecla para cerrar... & pause`;
+    replTerminal = vscode.window.createTerminal({
+      name: "ESP32 REPL",
+      shellPath: "cmd.exe",
+      shellArgs: ["/d", "/c", cmd]
+    });
+  } else {
+    // En macOS/Linux: usar bash/zsh con read al final
+    const userShell = process.env.SHELL || '/bin/bash';
+    const cmd = `python3 -m serial.tools.miniterm ${device} 115200; echo; echo 'REPL terminado — presiona Enter para cerrar...'; read -r`;
+    replTerminal = vscode.window.createTerminal({
+      name: "ESP32 REPL",
+      shellPath: userShell,
+      shellArgs: ["-lc", cmd]
+    });
+  }
   return replTerminal;
 }
 
