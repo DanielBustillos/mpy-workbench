@@ -14,7 +14,7 @@ Inspired by Thonny’s simplicity, this extension adds remote file management, i
 - 🔄 Two-way sync: compare local files with the device and sync changed files  
 - 📝 Create a new file in the Files view and upload it to the board on first save  
 - 💻 Integrated MicroPython REPL terminal  
-- ⚡ Per-workspace auto-sync and a status-bar indicator for workspace auto-sync  
+- ⏯️ Send commands to the board (stop, soft reset, etc.)  
 
 ## Sync utilities
 
