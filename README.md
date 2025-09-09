@@ -18,28 +18,15 @@ Inspired by Thonny’s simplicity, this extension adds remote file management, i
 
 ## Sync utilities
 
-These commands perform full or incremental synchronization between your local workspace and the connected MicroPython board. Short descriptions:
+These commands perform full or incremental synchronization between your local workspace and the connected MicroPython board:
 
-- **Check for differences**
-  - Compares a local manifest and the board manifest to list changed/new files and deleted files on both sides. Local-only files (present locally but not on the board) are marked in the Files view.
-
-- **Upload all files (Local → Board)** 
-  - Upload every non-ignored file from the local workspace to the device, recreating the directory layout on the board. Use for a full deploy. Large or unwanted files will be skipped if they match ignore patterns.
-
-- **Download all files (Board → Local)** 
-  - Download every file from the device to the local workspace, overwriting local copies if present. Use to mirror the board's current state locally.
-
-
-- **Sync changed files (Local → Board)** 
-  - Uploads only files detected as changed or new on the local side. Directories are not uploaded; only files are transferred.
-
-- **Sync changed files (Board → Local)**
-  - Downloads only files detected as changed or new on the board side.
-
-- **Delete all files on board**
-  - Removes all files under the configured device root. This is destructive — the extension prompts for confirmation before running. Use with caution.
-
-
+- **Check for differences:** Lists new, changed, or deleted files between local and board.  
+- **Sync Local → Board:** Uploads only local files that are new or modified.  
+- **Sync Board → Local:** Downloads only board files that are new or modified.  
+- **Upload all Local → Board:** Uploads all non-ignored local files to the device.  
+- **Download all Board → Local:** Downloads all board files, overwriting local copies.  
+- **Delete all files on board:** Removes all files on the device.
+  
 ## Useful commands (Command Palette)
 
 - `MPY Workbench: Refresh` — refresh the file tree
