@@ -1,11 +1,9 @@
 # MPY Workbench — MicroPython file manager for VS Code
 
-MPY Workbench provides fast, reliable two-way file sync and simple file management for MicroPython boards (ESP32 and similar) from inside Visual Studio Code.
-
-Inspired by Thonny's simple functionality, this extension improves the workflow by adding effortless two-way sync between board and local files.
+Inspired by Thonny’s simplicity, this extension adds remote file management, integrated REPL, and effortless two-way sync, making it easy to develop MicroPython projects from VS Code.
 
 **⚡ Connect to board and run a file**
-![Run file demo]([assets/run-file.gif](https://github.com/DanielBustillos/mpy-workbench/blob/main/assets/run-file.gif?raw=true)  
+![Run file demo](https://github.com/DanielBustillos/mpy-workbench/blob/main/assets/run-file.gif?raw=true)  
 
 **🔄 Autosync local folder contents**
 ![Sync files demo](https://github.com/DanielBustillos/mpy-workbench/blob/main/assets/sync%20new%20files.gif?raw=true)  
@@ -18,11 +16,9 @@ Inspired by Thonny's simple functionality, this extension improves the workflow 
 - 💻 Integrated MicroPython REPL terminal  
 - ⚡ Per-workspace auto-sync and a status-bar indicator for workspace auto-sync  
 
-
 ## Sync utilities
 
 These commands perform full or incremental synchronization between your local workspace and the connected MicroPython board. Short descriptions:
-
 
 - **Check for differences**
   - Compares a local manifest and the board manifest to list changed/new files and deleted files on both sides. Local-only files (present locally but not on the board) are marked in the Files view.
@@ -76,6 +72,11 @@ Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or
 - If file operations fail, confirm the correct serial port is selected and that no other tool is holding the port open.
 - If an upload fails because a path is a directory, the extension will skip directories and only upload files.
 
+## Next steps  
+- ✅ Broaden board compatibility (currently tested only with ESP32-S3 and ESP32-C3)  
+- 🔌 Add firmware flashing support for boards  
+- 🎨 Improve REPL styling for better readability and usability
+  
 ## Contributing
 
 Issues and pull requests are welcome. See the repository for development and packaging notes.
