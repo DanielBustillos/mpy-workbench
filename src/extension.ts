@@ -1,3 +1,55 @@
+// Desconecta la terminal REPL del ESP32 pero la deja abierta
+async function disconnectReplTerminal() {
+  if (replTerminal) {
+    try {
+      // Secuencia para salir limpiamente de miniterm: Ctrl-] luego 'q' + Enter
+      replTerminal.sendText("\x1d", false); // Ctrl-]
+      await new Promise(r => setTimeout(r, 120));
+      replTerminal.sendText("q", false);
+      await new Promise(r => setTimeout(r, 60));
+      replTerminal.sendText("\r", false);
+      await new Promise(r => setTimeout(r, 200));
+    } catch {}
+  }
+}
+
+async function restartReplInExistingTerminal() {
+  if (!replTerminal) return;
+  try {
+    const connect = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
+    if (!connect || connect === "auto") return;
+    const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
+    const isWindows = process.platform === 'win32';
+    if (isWindows) {
+      // Use PowerShell loop to auto-reconnect until available. Filter error stack traces.
+      // Print the reconnect notice only once per session.
+      const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { python -m serial.tools.miniterm '${device}' 115200 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
+      replTerminal.sendText(cmd, true);
+    } else {
+      // Loop forever: rerun miniterm on disconnect, allow Ctrl+C to stop; filter traceback blocks.
+      // Print the reconnect notice only once per session.
+      const cmd = `shown=0; while true; do ( python3 -m serial.tools.miniterm ${device} 115200 2>&1 | awk 'BEGIN{skip=0}
+$0 ~ /^--- Miniterm on /{skip=0; print; next}
+$0 ~ /^--- Quit:/{skip=0; print; next}
+$0 ~ /^Exception in thread [rt]x:/{skip=1;next}
+index($0, "Traceback (most recent call last):")==1 {skip=1;next}
+index($0, "During handling of the above exception, another exception occurred:")==1 {skip=1;next}
+skip && $0 ~ /^$/{skip=0;next}
+$0 ~ /^--- exit ---$/{next}
+index($0, "could not open port ")==1 {next}
+index($0, "SerialException: read failed:") {next}
+index($0, "OSError: [Errno 6] Device not configured") {next}
+index($0, "os.read(") {next}
+$0 ~ /^[[:space:]]*\^+$/ {next}
+index($0, "serial/tools/miniterm.py") {next}
+index($0, "serial/serialposix.py") {next}
+index($0, "/threading.py") {next}
+skip==0 {print}' ); if [ $shown -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; shown=1; fi; sleep 1; done`;
+      replTerminal.sendText(cmd, true);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  } catch {}
+}
 import * as vscode from "vscode";
 import { Esp32Tree } from "./esp32Fs";
 import { ActionsTree } from "./actions";
@@ -65,8 +117,91 @@ export function activate(context: vscode.ExtensionContext) {
       const p = path.join(wsPath, MPY_WORKBENCH_DIR, '.mpyignore');
       await fs.access(p);
     } catch {
-      const content = `# Ignore patterns for MPY Workbench (gitignore-style)\n# These paths are relative to your workspace root. Examples:\n# build/\n# secret.json\n# **/*.log\n`;
+      const content = buildDefaultMpyIgnoreContent();
       try { await fs.writeFile(path.join(wsPath, MPY_WORKBENCH_DIR, '.mpyignore'), content, 'utf8'); } catch {}
+    }
+  }
+
+  function buildDefaultMpyIgnoreContent(): string {
+    return [
+      '# .mpyignore — reglas por defecto (similar a .gitignore). Ajusta según tu proyecto.',
+      '# Las rutas son relativas a la raíz del workspace.',
+      '',
+      '# VCS',
+      '.git/',
+      '.svn/',
+      '.hg/',
+      '',
+      '# IDE/Editor',
+      '.vscode/',
+      '.idea/',
+      '.vs/',
+      '',
+      '# SO',
+      '.DS_Store',
+      'Thumbs.db',
+      '',
+      '# Node/JS',
+      'node_modules/',
+      'dist/',
+      'out/',
+      'build/',
+      '.cache/',
+      'coverage/',
+      '.next/',
+      '.nuxt/',
+      '.svelte-kit/',
+      '.turbo/',
+      '.parcel-cache/',
+      '*.log',
+      'npm-debug.log*',
+      'yarn-debug.log*',
+      'yarn-error.log*',
+      'pnpm-debug.log*',
+      '',
+      '# Python',
+      '__pycache__/',
+      '*.py[cod]',
+      '*.pyo',
+      '*.pyd',
+      '.venv/',
+      'venv/',
+      '.env',
+      '.env.*',
+      '.mypy_cache/',
+      '.pytest_cache/',
+      '.coverage',
+      'coverage.xml',
+      '*.egg-info/',
+      '.tox/',
+      '',
+      '# Otros',
+      '*.swp',
+      '*.swo',
+      '',
+      '# MPY Workbench',
+      '.mpy-workbench/',
+      '/.mpy-workbench',
+      '.mpyignore',
+      ''
+    ].join('\n');
+  }
+
+  // Ensure a root-level .mpyignore exists with sensible defaults
+  async function ensureRootIgnoreFile(wsPath: string) {
+    const ignorePath = path.join(wsPath, '.mpyignore');
+    try {
+      // If exists, upgrade only if it's the placeholder header with no rules
+      const txt = await fs.readFile(ignorePath, 'utf8');
+      const nonComment = txt.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+      const hasOldHeader = /Ignore patterns for MPY Workbench/.test(txt);
+      if (hasOldHeader && nonComment.length === 0) {
+        try { await fs.writeFile(ignorePath, buildDefaultMpyIgnoreContent(), 'utf8'); } catch {}
+      }
+      return; // file exists; keep user rules otherwise
+    } catch {
+      // Not exists: create with defaults
+      try { await fs.writeFile(ignorePath, buildDefaultMpyIgnoreContent(), 'utf8'); } catch {}
     }
   }
 
@@ -185,14 +320,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
     opQueue = opQueue.catch(() => {}).then(async () => {
       const wasOpen = isReplOpen();
-      if (wasOpen) await closeReplTerminal();
+      if (wasOpen) await disconnectReplTerminal();
       try {
         mp.setSerialNoticeSuppressed(true);
         await ensureIdle();
         return await fn();
       } finally {
         mp.setSerialNoticeSuppressed(false);
-        if (wasOpen) await openReplTerminal(context);
+        if (wasOpen) await restartReplInExistingTerminal();
       }
     });
     return opQueue as Promise<T>;
@@ -202,9 +337,10 @@ export function activate(context: vscode.ExtensionContext) {
     actionsView,
     syncView,
     vscode.commands.registerCommand("mpyWorkbench.refresh", () => { 
-      // On refresh, only issue the mpremote list without extra control signals
-  tree.enableRawListForNext();
-  tree.refreshTree();
+      // Clear cache and force next listing to come from device
+      tree.clearCache();
+      tree.enableRawListForNext();
+      tree.refreshTree();
     }),
     vscode.commands.registerCommand("mpyWorkbench.pickPort", async () => {
       // Siempre obtener la lista más reciente de puertos antes de mostrar el selector
@@ -216,10 +352,11 @@ export function activate(context: vscode.ExtensionContext) {
       const picked = await vscode.window.showQuickPick(items, { placeHolder: "Select Board serial port" });
       if (!picked) return;
       const value = picked.label === "auto" ? "auto" : picked.label;
-      await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", value, vscode.ConfigurationTarget.Global);
-      updatePortContext();
-      vscode.window.showInformationMessage(`Board connect set to ${value}`);
-      tree.refreshTree();
+  await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", value, vscode.ConfigurationTarget.Global);
+  updatePortContext();
+  vscode.window.showInformationMessage(`Board connect set to ${value}`);
+  tree.clearCache();
+  tree.refreshTree();
   // (no prompt) just refresh the tree after selecting port
     }),
     vscode.commands.registerCommand("mpyWorkbench.serialSendCtrlC", async () => {
@@ -287,6 +424,40 @@ export function activate(context: vscode.ExtensionContext) {
         });
       });
     }),
+    vscode.commands.registerCommand("mpyWorkbench.softReset", async () => {
+      const cfg = vscode.workspace.getConfiguration();
+      const connect = cfg.get<string>("mpyWorkbench.connect", "auto");
+      if (!connect || connect === "auto") { vscode.window.showWarningMessage("Select a specific serial port first (not 'auto')."); return; }
+      const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
+      // If REPL terminal is open, prefer sending through it to avoid port conflicts
+      if (isReplOpen()) {
+        try {
+          const term = await getReplTerminal(context);
+          term.sendText("\x03", false); // Ctrl-C
+          await new Promise(r => setTimeout(r, 60));
+          term.sendText("\x02", false); // Ctrl-B (friendly REPL)
+          await new Promise(r => setTimeout(r, 80));
+          term.sendText("\x04", false); // Ctrl-D (soft reset)
+          vscode.window.showInformationMessage("Board: Soft reset sent via ESP32 REPL");
+          return;
+        } catch {
+          // fall back to writing to device below
+        }
+      }
+      const isMac = process.platform === 'darwin';
+      const sttyCmd = isMac ? `stty -f ${device} 115200` : `stty -F ${device} 115200`;
+      const cmd = `${sttyCmd} && printf '\\x03\\x02\\x04' > ${device}`;
+      await new Promise<void>((resolve) => {
+        exec(cmd, (error, stdout, stderr) => {
+          if (error) {
+            vscode.window.showErrorMessage(`Board: Soft reset failed: ${stderr || error.message}`);
+          } else {
+            vscode.window.showInformationMessage(`Board: Soft reset (Ctrl-D) sent to ${device}`);
+          }
+          resolve();
+        });
+      });
+    }),
 
     vscode.commands.registerCommand("mpyWorkbench.newFileBoardAndLocal", async () => {
       const ws = vscode.workspace.workspaceFolders?.[0];
@@ -324,6 +495,7 @@ export function activate(context: vscode.ExtensionContext) {
           } else {
             await withAutoSuspend(() => mp.cpToDevice(abs, devicePath));
             vscode.window.showInformationMessage(`Archivo guardado en local y subido al board: ${filename}`);
+            tree.addNode(devicePath, false);
           }
         } catch (err: any) {
           vscode.window.showErrorMessage(`Error al subir archivo al board: ${err?.message ?? err}`);
@@ -362,6 +534,7 @@ export function activate(context: vscode.ExtensionContext) {
         await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
       }
       await withAutoSuspend(() => mp.cpToDevice(abs, node.path));
+      tree.addNode(node.path, false); // Añade archivo subido al árbol
       vscode.window.showInformationMessage(`Synced local → board: ${rel}`);
     }),
     vscode.commands.registerCommand("mpyWorkbench.syncFileBoardToLocal", async (node: Esp32Node) => {
@@ -373,6 +546,7 @@ export function activate(context: vscode.ExtensionContext) {
       const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+      tree.addNode(node.path, false); // Garantiza presencia en árbol (no relista)
       vscode.window.showInformationMessage(`Synced board → local: ${rel}`);
       try {
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
@@ -380,15 +554,21 @@ export function activate(context: vscode.ExtensionContext) {
       } catch {}
     }),
     vscode.commands.registerCommand("mpyWorkbench.setPort", async (port: string) => {
-      await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);
-      updatePortContext();
-      vscode.window.showInformationMessage(`ESP32 connect set to ${port}`);
+  await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);
+  updatePortContext();
+  vscode.window.showInformationMessage(`ESP32 connect set to ${port}`);
+  tree.clearCache();
   tree.refreshTree();
   // (no prompt) just refresh the tree after setting port
     }),
 
     vscode.commands.registerCommand("mpyWorkbench.syncBaseline", async () => {
       try {
+        // Cierra la terminal REPL si está abierta para evitar conflicto de puerto
+        if (isReplOpen()) {
+          await disconnectReplTerminal();
+          await new Promise(r => setTimeout(r, 400));
+        }
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
         const initialized = await isLocalSyncInitialized();
@@ -399,8 +579,8 @@ export function activate(context: vscode.ExtensionContext) {
             "Initialize"
           );
           if (initialize !== "Initialize") return;
-          
           // Create initial manifest to initialize sync
+          await ensureRootIgnoreFile(ws.uri.fsPath);
           await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
           const matcher = await createIgnoreMatcher(ws.uri.fsPath);
           const initialManifest = await buildManifest(ws.uri.fsPath, matcher);
@@ -413,58 +593,61 @@ export function activate(context: vscode.ExtensionContext) {
         const matcher2 = await createIgnoreMatcher(ws.uri.fsPath);
         const man = await buildManifest(ws.uri.fsPath, matcher2);
 
-      // Upload all files with progress
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: "Uploading all files to board...",
-        cancellable: false
-      }, async (progress, token) => {
-        const files = Object.keys(man.files);
-        let uploaded = 0;
-        const total = files.length;
+        // Upload all files with progress
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "Uploading all files to board...",
+          cancellable: false
+        }, async (progress, token) => {
+          const files = Object.keys(man.files);
+          let uploaded = 0;
+          const total = files.length;
 
-        if (total === 0) {
-          progress.report({ increment: 100, message: "No files to upload" });
-          return;
-        }
-
-        progress.report({ increment: 0, message: `Found ${total} files to upload` });
-
-        await withAutoSuspend(async () => {
-          for (const relativePath of files) {
-            const localPath = path.join(ws.uri.fsPath, relativePath);
-            const devicePath = path.posix.join(rootPath, relativePath);
-            
-            progress.report({ 
-              increment: (100 / total), 
-              message: `Uploading ${relativePath} (${++uploaded}/${total})` 
-            });
-            
-            // Ensure directory exists on device
-            const deviceDir = path.posix.dirname(devicePath);
-            if (deviceDir !== '.' && deviceDir !== rootPath) {
-              try {
-                await mp.mkdir(deviceDir);
-              } catch {
-                // Directory might already exist, ignore error
-              }
-            }
-            
-            await mp.uploadReplacing(localPath, devicePath);
+          if (total === 0) {
+            progress.report({ increment: 100, message: "No files to upload" });
+            return;
           }
-        });
-      });
 
-      // Save manifest locally and on device
-  const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
-      await saveManifest(manifestPath, man);
-      const tmp = path.join(context.globalStorageUri.fsPath, "esp32sync.json");
-      await fs.mkdir(path.dirname(tmp), { recursive: true });
-      await fs.writeFile(tmp, JSON.stringify(man));
-  const deviceManifest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/.mpy-workbench/esp32sync.json";
-      await withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
-      
+          progress.report({ increment: 0, message: `Found ${total} files to upload` });
+
+          await withAutoSuspend(async () => {
+            for (const relativePath of files) {
+              const localPath = path.join(ws.uri.fsPath, relativePath);
+              const devicePath = path.posix.join(rootPath, relativePath);
+
+              progress.report({ 
+                increment: (100 / total), 
+                message: `Uploading ${relativePath} (${++uploaded}/${total})` 
+              });
+
+              // Ensure directory exists on device
+              const deviceDir = path.posix.dirname(devicePath);
+              if (deviceDir !== '.' && deviceDir !== rootPath) {
+                try {
+                  await mp.mkdir(deviceDir);
+                  tree.addNode(deviceDir, true); // Añade carpeta al árbol
+                } catch {
+                  // Directory might already exist, ignore error
+                }
+              }
+              await mp.uploadReplacing(localPath, devicePath);
+              tree.addNode(devicePath, false); // Añade archivo al árbol
+            }
+          });
+        });
+
+        // Save manifest locally and on device
+        const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
+        await saveManifest(manifestPath, man);
+        const tmp = path.join(context.globalStorageUri.fsPath, "esp32sync.json");
+        await fs.mkdir(path.dirname(tmp), { recursive: true });
+        await fs.writeFile(tmp, JSON.stringify(man));
+        const deviceManifest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/.mpy-workbench/esp32sync.json";
+        await withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
+
         vscode.window.showInformationMessage("Board: Sync all files (Local → Board) completed");
+        // Clear any diff/local-only markers after successful sync-all
+        decorations.clear();
         tree.refreshTree();
       } catch (error: any) {
         vscode.window.showErrorMessage(`Upload failed: ${error?.message ?? String(error)}`);
@@ -472,6 +655,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromBoard", async () => {
+      // Cierra la terminal REPL si está abierta para evitar conflicto de puerto
+      if (isReplOpen()) {
+        await disconnectReplTerminal();
+        await new Promise(r => setTimeout(r, 400));
+      }
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
@@ -483,7 +671,7 @@ export function activate(context: vscode.ExtensionContext) {
           const rel = toLocalRelative(stat.path, rootPath);
           return !matcher(rel, false);
         });
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync all files (Board → Local)", cancellable: false }, async (progress) => {
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync all files (Board → Local)", cancellable: false }, async (progress) => {
         let done = 0;
         const total = toDownload.length;
         await withAutoSuspend(async () => {
@@ -493,10 +681,14 @@ export function activate(context: vscode.ExtensionContext) {
             progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
             await fs.mkdir(path.dirname(abs), { recursive: true });
             await mp.cpFromDevice(stat.path, abs);
+            tree.addNode(stat.path, false); // Añade archivo descargado al árbol
           }
         });
       });
-  vscode.window.showInformationMessage("Board: Sync all files (Board → Local) completed");
+      vscode.window.showInformationMessage("Board: Sync all files (Board → Local) completed");
+      // Clear any diff/local-only markers after successful sync-all
+      decorations.clear();
+      tree.refreshTree();
     }),
 
 
@@ -510,7 +702,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("mpyWorkbench.stopSerial", async () => {
       await closeReplTerminal();
-  vscode.window.showInformationMessage("Board: REPL closed");
+      vscode.window.showInformationMessage("Board: ESP32 REPL closed");
     }),
 
     vscode.commands.registerCommand("mpyWorkbench.autoSuspendLs", async (pathArg: string) => {
@@ -546,14 +738,27 @@ export function activate(context: vscode.ExtensionContext) {
       const dest = "/" + rel.replace(/\\\\/g, "/");
       // Use replacing upload to avoid partial writes while code may autostart
       await withAutoSuspend(() => mp.uploadReplacing(ed.document.uri.fsPath, dest));
+      tree.addNode(dest, false);
       vscode.window.showInformationMessage(`Uploaded to ${dest}`);
+      tree.refreshTree();
     }),
     vscode.commands.registerCommand("mpyWorkbench.runActiveFile", async () => {
       const ed = vscode.window.activeTextEditor;
       if (!ed) { vscode.window.showErrorMessage("No active editor"); return; }
       await ed.document.save();
-      // Open/show the REPL terminal with strict handshake to avoid race conditions
-      await openReplTerminal(context);
+      // Si la terminal REPL está abierta, ciérrala antes de ejecutar
+      if (isReplOpen()) {
+        await closeReplTerminal();
+        // Espera a que el sistema libere el puerto
+        await new Promise(r => setTimeout(r, 400));
+      }
+      // Intenta abrir la terminal REPL
+      try {
+        await openReplTerminal(context);
+      } catch (err) {
+        vscode.window.showErrorMessage("No se pudo abrir la terminal REPL. El puerto puede estar ocupado o desconectado. Cierra cualquier proceso que use el puerto e inténtalo de nuevo.");
+        return;
+      }
       const term = await getReplTerminal(context);
       // Pausa mayor para evitar que Ctrl-* se trate como señal del host antes de que miniterm tome control
       await new Promise(r => setTimeout(r, 600));
@@ -570,6 +775,19 @@ export function activate(context: vscode.ExtensionContext) {
       term.sendText("\x02", false); // Ctrl-B (friendly REPL)
     }),
     vscode.commands.registerCommand("mpyWorkbench.checkDiffs", async () => {
+        // ...existing code...
+        const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+        // Helper para convertir ruta local relativa a ruta absoluta en el board
+        const toDevicePath = (localRel: string) => {
+          const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
+          if (normRoot === "/") return "/" + localRel;
+          return localRel === "" ? normRoot : normRoot + "/" + localRel;
+        };
+      // Cierra la terminal REPL si está abierta para evitar conflicto de puerto
+      if (isReplOpen()) {
+        await disconnectReplTerminal();
+        await new Promise(r => setTimeout(r, 400));
+      }
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: "Checking file differences...",
@@ -577,7 +795,6 @@ export function activate(context: vscode.ExtensionContext) {
       }, async (progress) => {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-        
         // Check if workspace is initialized for sync
         const initialized = await isLocalSyncInitialized();
         if (!initialized) {
@@ -587,18 +804,16 @@ export function activate(context: vscode.ExtensionContext) {
             "Initialize"
           );
           if (initialize !== "Initialize") return;
-          
           // Create initial manifest to initialize sync
+          await ensureRootIgnoreFile(ws.uri.fsPath);
           await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
           const matcher = await createIgnoreMatcher(ws.uri.fsPath);
           const initialManifest = await buildManifest(ws.uri.fsPath, matcher);
-      const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
+          const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
           await saveManifest(manifestPath, initialManifest);
           vscode.window.showInformationMessage("Local folder initialized for synchronization.");
         }
-        
         const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-        
         progress.report({ message: "Reading board files..." });
         const relFromDevice = (devicePath: string) => {
           const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
@@ -607,42 +822,54 @@ export function activate(context: vscode.ExtensionContext) {
           if (devicePath === normRoot) return "";
           return devicePath.replace(/^\//, "");
         };
-
-        const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
-        const deviceFiles = deviceStats.filter(e => !e.isDir);
-        const diffSet = new Set<string>();
-        
-        progress.report({ message: "Comparing files..." });
-        for (const f of deviceFiles) {
-          const rel = relFromDevice(f.path);
-          const abs = path.join(ws.uri.fsPath, ...rel.split('/'));
-          try {
-            const st = await fs.stat(abs);
-            const same = st.size === f.size; // mtime across fs may be unreliable; size is a good first pass
-            if (!same) diffSet.add(f.path);
-          } catch { // missing locally
-            diffSet.add(f.path);
-          }
-        }
-        
-        progress.report({ message: "Checking local files..." });
-        // Check for files that exist locally but not on board
-        const localOnlySet = new Set<string>();
-        const toDevicePath = (localRel: string) => {
-          const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
-          if (normRoot === "/") return "/" + localRel;
-          return localRel === "" ? normRoot : normRoot + "/" + localRel;
-        };
-        
-        // Get all local files using the existing manifest/ignore system
+        // Aplica ignore/filtros en local antes de comparar
         const matcher = await createIgnoreMatcher(ws.uri.fsPath);
         const localManifest = await buildManifest(ws.uri.fsPath, matcher);
-        const deviceFileSet = new Set(deviceFiles.map(f => f.path));
-        
-        for (const localRel of Object.keys(localManifest.files)) {
-          const devicePath = toDevicePath(localRel);
-          if (!deviceFileSet.has(devicePath)) {
-            localOnlySet.add(devicePath);
+        // Solo archivos locales no ignorados
+        const localFiles = Object.keys(localManifest.files);
+        // Obtén listado del board
+        const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
+        const deviceFiles = deviceStats.filter(e => !e.isDir);
+        // Apply ignore rules to device files too, so ignored files/dirs don't produce false diffs
+        const deviceFilesFiltered = deviceFiles.filter(f => {
+          const rel = relFromDevice(f.path);
+          return !matcher(rel, false);
+        });
+        const deviceFileMap = new Map(deviceFilesFiltered.map(f => [relFromDevice(f.path), f]));
+        const diffSet = new Set<string>();
+
+        progress.report({ message: "Comparing files..." });
+        // Compara solo archivos locales no ignorados
+        for (const localRel of localFiles) {
+          const deviceFile = deviceFileMap.get(localRel);
+          const abs = path.join(ws.uri.fsPath, ...localRel.split('/'));
+          if (deviceFile) {
+            try {
+              const st = await fs.stat(abs);
+              // Consider files the same if sizes match (ignore mtime skew on device)
+              const same = st.size === deviceFile.size;
+              if (!same) diffSet.add(deviceFile.path);
+            } catch {
+              diffSet.add(deviceFile.path);
+            }
+          }
+        }
+
+        // Archivos en el board que no existen localmente (no ignorados)
+        for (const [rel, deviceFile] of deviceFileMap.entries()) {
+          if (!localFiles.includes(rel)) {
+            diffSet.add(deviceFile.path);
+          }
+        }
+
+        progress.report({ message: "Checking local files..." });
+        // Archivos que existen localmente pero no en el board
+        const localOnlySet = new Set<string>();
+        for (const localRel of localFiles) {
+          const deviceFile = deviceFileMap.get(localRel);
+          if (!deviceFile) {
+            // Solo agrega si no está ignorado
+            localOnlySet.add(toDevicePath(localRel));
           }
         }
         
@@ -686,15 +913,17 @@ export function activate(context: vscode.ExtensionContext) {
         console.log("Debug - checkDiffs results:");
         console.log("- diffSet:", Array.from(diffSet));
         console.log("- localOnlySet:", Array.from(localOnlySet));
-        console.log("- deviceFiles count:", deviceFiles.length);
+        console.log("- deviceFiles count:", deviceFiles.length, "(filtered:", deviceFilesFiltered.length, ")");
         console.log("- localManifest files count:", Object.keys(localManifest.files).length);
         
         // Refresh the tree view to show local-only files
         tree.refreshTree();
         
-        const totalFlagged = diffSet.size + localOnlySet.size;
+        const changedFilesCount = (decorations as any)._originalDiffs ? (decorations as any)._originalDiffs.size : Array.from(diffSet).filter(p => !p.endsWith('/')).length;
+        const localOnlyFilesCount = (decorations as any)._originalLocalOnly ? (decorations as any)._originalLocalOnly.size : Array.from(localOnlySet).filter(p => !p.endsWith('/')).length;
+        const totalFilesFlagged = changedFilesCount + localOnlyFilesCount;
         vscode.window.showInformationMessage(
-          `Board: Diff check complete (${diffSet.size} changed, ${localOnlySet.size} local-only, ${totalFlagged} total flagged)`
+          `Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only, ${totalFilesFlagged} total files)`
         );
       });
     }),
@@ -711,6 +940,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (initialize !== "Initialize") return;
         
         // Create initial manifest to initialize sync
+        await ensureRootIgnoreFile(ws.uri.fsPath);
         await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
         const matcher = await createIgnoreMatcher(ws.uri.fsPath);
         const initialManifest = await buildManifest(ws.uri.fsPath, matcher);
@@ -785,17 +1015,18 @@ export function activate(context: vscode.ExtensionContext) {
             progress.report({ message: `${action} ${rel} (${++done}/${total})` });
             
             await mp.uploadReplacing(abs, devicePath);
+            tree.addNode(devicePath, false); // Añade archivo subido al árbol
           }
         });
       });
       decorations.clear();
+      tree.refreshTree();
       const diffCount = diffs.length;
       const localOnlyCount = localOnlyFiles.length;
       const message = localOnlyCount > 0 
         ? `Board: ${diffCount} changed and ${localOnlyCount} new files uploaded to board`
         : `Board: ${diffCount} diffed files uploaded to board`;
       vscode.window.showInformationMessage(message + " and marks cleared");
-      tree.refreshTree();
     }),
     vscode.commands.registerCommand("mpyWorkbench.syncDiffsBoardToLocal", async () => {
       const ws2 = vscode.workspace.workspaceFolders?.[0];
@@ -811,6 +1042,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (initialize !== "Initialize") return;
         
         // Create initial manifest to initialize sync
+        await ensureRootIgnoreFile(ws2.uri.fsPath);
         await ensureWorkbenchIgnoreFile(ws2.uri.fsPath);
         const matcher = await createIgnoreMatcher(ws2.uri.fsPath);
         const initialManifest = await buildManifest(ws2.uri.fsPath, matcher);
@@ -863,6 +1095,7 @@ export function activate(context: vscode.ExtensionContext) {
             progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
             await fs.mkdir(path.dirname(abs), { recursive: true });
             await mp.cpFromDevice(devicePath, abs);
+            tree.addNode(devicePath, false); // Añade archivo descargado al árbol
           }
         });
       });
@@ -899,7 +1132,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!name) return;
       const target = base === "/" ? `/${name}` : `${base}/${name}`;
       await withAutoSuspend(() => mp.mkdir(target));
-  tree.refreshTree();
+      tree.addNode(target, true);
     }),
     vscode.commands.registerCommand("mpyWorkbench.delete", async (node: Esp32Node) => {
       const okBoard = await vscode.window.showWarningMessage(`Delete ${node.path} from board?`, { modal: true }, "Delete");
@@ -912,64 +1145,20 @@ export function activate(context: vscode.ExtensionContext) {
         cancellable: false
       }, async (progress, token) => {
         progress.report({ increment: 0, message: "Starting deletion..." });
-        
         try {
-          // Verify that the file exists before trying to delete it
-          progress.report({ increment: 20, message: "Checking file info..." });
-          const fileInfo = await withAutoSuspend(() => mp.getFileInfo(node.path));
-          
-          if (!fileInfo) {
-            progress.report({ increment: 100, message: "File not found!" });
-            vscode.window.showWarningMessage(`File ${node.path} does not exist on board`);
-            return;
-          }
-          
-          progress.report({ increment: 40, message: "Connecting to board..." });
-          if (fileInfo.isDir) {
-            progress.report({ increment: 60, message: "Removing directory and contents..." });
-            await withAutoSuspend(() => mp.deleteFolderRecursive(node.path));
-          } else {
-            progress.report({ increment: 60, message: "Removing file..." });
-            await withAutoSuspend(() => mp.deleteFile(node.path));
-          }
-          
-          // Verify that the file was deleted (with retries)
-          progress.report({ increment: 80, message: "Verifying deletion..." });
-          
-          let existsAfter = true;
-          let attempts = 0;
-          const maxAttempts = 3;
-          
-          while (existsAfter && attempts < maxAttempts) {
-            attempts++;
-            if (attempts > 1) {
-              // Wait a bit before next attempt
-              await delay(200);
-            }
-            
-            try {
-              existsAfter = await withAutoSuspend(() => mp.fileExists(node.path));
-            } catch (error) {
-              // If there's an error verifying, assume it was deleted
-              existsAfter = false;
-              break;
-            }
-          }
-          
-          if (existsAfter) {
-            progress.report({ increment: 100, message: "Deletion verification failed!" });
-            vscode.window.showWarningMessage(`${node.path} was processed but verification failed. Please refresh to check if it was deleted.`);
-          } else {
-            progress.report({ increment: 100, message: "Deletion complete!" });
-            vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);
-          }
+          // Fast path: one-shot delete (file or directory)
+          const isDir = node.kind === "dir";
+          progress.report({ increment: 60, message: isDir ? "Removing directory..." : "Removing file..." });
+          await withAutoSuspend(() => mp.deleteAny(node.path));
+          progress.report({ increment: 100, message: "Deletion complete!" });
+          vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);
+          tree.removeNode(node.path);
         } catch (err: any) {
           progress.report({ increment: 100, message: "Deletion failed!" });
           vscode.window.showErrorMessage(`Failed to delete ${node.path} from board: ${err?.message ?? String(err)}`);
         }
       });
       
-      tree.refreshTree();
     }),
     vscode.commands.registerCommand("mpyWorkbench.deleteBoardAndLocal", async (node: Esp32Node) => {
       const okBoardLocal = await vscode.window.showWarningMessage(`Delete ${node.path} from board AND local workspace?`, { modal: true }, "Delete");
@@ -984,52 +1173,13 @@ export function activate(context: vscode.ExtensionContext) {
         progress.report({ increment: 0, message: "Starting deletion..." });
         
         try {
-          // Verify that the file exists before trying to delete it
-          progress.report({ increment: 10, message: "Checking file info..." });
-          const fileInfo = await withAutoSuspend(() => mp.getFileInfo(node.path));
-          
-          if (!fileInfo) {
-            progress.report({ increment: 50, message: "File not found on board, continuing with local..." });
-            vscode.window.showWarningMessage(`File ${node.path} does not exist on board, deleting only local copy`);
-          } else {
-            progress.report({ increment: 30, message: "Connecting to board..." });
-            if (fileInfo.isDir) {
-              progress.report({ increment: 50, message: "Removing directory from board..." });
-              await withAutoSuspend(() => mp.deleteFolderRecursive(node.path));
-            } else {
-              progress.report({ increment: 50, message: "Removing file from board..." });
-              await withAutoSuspend(() => mp.deleteFile(node.path));
-            }
-            
-            // Verify that the file was deleted from board (with retries)
-            let existsAfter = true;
-            let attempts = 0;
-            const maxAttempts = 3;
-            
-            while (existsAfter && attempts < maxAttempts) {
-              attempts++;
-              if (attempts > 1) {
-                // Wait a bit before next attempt
-                await delay(200);
-              }
-              
-              try {
-                existsAfter = await withAutoSuspend(() => mp.fileExists(node.path));
-              } catch (error) {
-                // If there's an error verifying, assume it was deleted
-                existsAfter = false;
-                break;
-              }
-            }
-            
-            if (existsAfter) {
-              progress.report({ increment: 60, message: "Board deletion verification failed!" });
-              vscode.window.showWarningMessage(`${node.path} was processed but verification failed. Please refresh to check if it was deleted.`);
-            } else {
-              progress.report({ increment: 70, message: "Board deletion complete!" });
-              vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);
-            }
-          }
+          // Fast path: one-shot delete on board
+          const isDir = node.kind === "dir";
+          progress.report({ increment: 50, message: isDir ? "Removing directory from board..." : "Removing file from board..." });
+          await withAutoSuspend(() => mp.deleteAny(node.path));
+          progress.report({ increment: 70, message: "Board deletion complete!" });
+          vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);
+          tree.removeNode(node.path);
         } catch (err: any) {
           progress.report({ increment: 70, message: "Board deletion failed!" });
           vscode.window.showErrorMessage(`Failed to delete ${node.path} from board: ${err?.message ?? String(err)}`);
@@ -1045,7 +1195,7 @@ export function activate(context: vscode.ExtensionContext) {
           await fs.rm(abs, { recursive: true, force: true });
         } catch {}
       }
-      tree.refreshTree();
+      tree.removeNode(node.path);
     }),
     vscode.commands.registerCommand("mpyWorkbench.deleteAllBoard", async () => {
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
@@ -1088,8 +1238,8 @@ export function activate(context: vscode.ExtensionContext) {
           progress.report({ increment: 100, message: "Deletion complete!" });
           
           // Reportar resultados
-          const deletedCount = result.deleted.length;
-          const errorCount = result.errors.length;
+          const deletedCount = (result as any).deleted_count ?? result.deleted.length;
+          const errorCount = (result as any).error_count ?? result.errors.length;
           const remainingCount = remaining.length;
           
           if (errorCount > 0) {
@@ -1112,8 +1262,8 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(`Failed to delete files from board: ${error?.message ?? String(error)}`);
         }
       });
-      
-      tree.refreshTree();
+      // Actualiza el árbol sin relistar: deja el directorio raíz vacío en cache
+      tree.resetDir(rootPath);
     }),
     vscode.commands.registerCommand("mpyWorkbench.deleteAllBoardFromView", async () => {
       await vscode.commands.executeCommand("mpyWorkbench.deleteAllBoard");
@@ -1133,7 +1283,100 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("mpyWorkbench.syncDiffsLocalToBoardFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncDiffsLocalToBoard"); }),
     vscode.commands.registerCommand("mpyWorkbench.syncDiffsBoardToLocalFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncDiffsBoardToLocal"); }),
     vscode.commands.registerCommand("mpyWorkbench.runActiveFileFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.runActiveFile"); }),
-    vscode.commands.registerCommand("mpyWorkbench.openReplFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.openRepl"); })
+    vscode.commands.registerCommand("mpyWorkbench.openReplFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.openRepl"); }),
+    vscode.commands.registerCommand("mpyWorkbench.newFileInTree", async (node?: Esp32Node) => {
+      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!ws) return;
+      // Determine base path on device
+      const baseDevice = node
+        ? (node.kind === "dir" ? node.path : path.posix.dirname(node.path))
+        : "/";
+      const baseLabel = baseDevice === "/" ? "/" : baseDevice;
+      const newName = await vscode.window.showInputBox({
+        prompt: `Nombre del nuevo archivo (en ${baseLabel})`,
+        placeHolder: "nombre.ext o subcarpeta/nombre.ext",
+        validateInput: v => v && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "El nombre no debe terminar en / ni estar vacío"
+      });
+      if (!newName) return;
+      const devicePath = baseDevice === "/" ? `/${newName.replace(/^\//, "")}` : `${baseDevice}/${newName.replace(/^\//, "")}`;
+      try {
+        // Create locally first
+        const relLocal = devicePath.replace(/^\//, "");
+        const localPath = path.join(ws, relLocal);
+        await fs.mkdir(path.dirname(localPath), { recursive: true });
+        await fs.writeFile(localPath, "");
+        // Upload to board
+        await mp.uploadReplacing(localPath, devicePath);
+        vscode.window.showInformationMessage(`Archivo creado: ${devicePath}`);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Error al crear archivo: ${err?.message ?? err}`);
+      }
+      vscode.commands.executeCommand("mpyWorkbench.refresh");
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.newFolderInTree", async (node?: Esp32Node) => {
+      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!ws) return;
+      const baseDevice = node
+        ? (node.kind === "dir" ? node.path : path.posix.dirname(node.path))
+        : "/";
+      const baseLabel = baseDevice === "/" ? "/" : baseDevice;
+      const newName = await vscode.window.showInputBox({
+        prompt: `Nombre de la nueva carpeta (en ${baseLabel})`,
+        placeHolder: "carpeta o subcarpeta/nombre",
+        validateInput: v => v && !v.endsWith(".") && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "El nombre no debe terminar en / ni estar vacío"
+      });
+      if (!newName) return;
+      const devicePath = baseDevice === "/" ? `/${newName.replace(/^\//, "")}` : `${baseDevice}/${newName.replace(/^\//, "")}`;
+      try {
+        await mp.mkdir(devicePath);
+        const relLocal = devicePath.replace(/^\//, "");
+        const localPath = path.join(ws, relLocal);
+        await fs.mkdir(localPath, { recursive: true });
+        vscode.window.showInformationMessage(`Carpeta creada: ${devicePath}`);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Error al crear carpeta: ${err?.message ?? err}`);
+      }
+      vscode.commands.executeCommand("mpyWorkbench.refresh");
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.renameNode", async (node: Esp32Node) => {
+      if (!node) return;
+      const oldPath = node.path;
+      const isDir = node.kind === "dir";
+      const base = path.posix.dirname(oldPath);
+      const oldName = path.posix.basename(oldPath);
+      const newName = await vscode.window.showInputBox({
+        prompt: `Nuevo nombre para ${oldName}`,
+        value: oldName,
+        validateInput: v => v && v !== oldName ? undefined : "El nombre debe ser diferente y no vacío"
+      });
+      if (!newName || newName === oldName) return;
+      const newPath = base === "/" ? `/${newName}` : `${base}/${newName}`;
+      // Try to rename on board first
+      try {
+        await mp.mvOnDevice(oldPath, newPath);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Error al renombrar en el board: ${err?.message ?? err}`);
+        return;
+      }
+      // Try to rename locally if file exists locally
+      const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (wsFolder) {
+        // Compute local path from node.path
+        const relPath = node.path.replace(/^\//, "");
+        const localOld = path.join(wsFolder, relPath);
+        const localNew = path.join(wsFolder, base.replace(/^\//, ""), newName);
+        try {
+          await fs.rename(localOld, localNew);
+        } catch (e) {
+          // If file doesn't exist locally, ignore
+        }
+      }
+      vscode.window.showInformationMessage(`Renombrado: ${oldPath} → ${newPath}`);
+      // Refresh tree
+      const tree = vscode.extensions.getExtension("DanielBucam.mpy-workbench")?.exports?.esp32Tree as { refreshTree: () => void };
+      if (tree && typeof tree.refreshTree === "function") tree.refreshTree();
+      else vscode.commands.executeCommand("mpyWorkbench.refresh");
+    })
   );
   // Auto-upload on save: if file is inside a workspace, push to device path mapped by mpyWorkbench.rootPath
   context.subscriptions.push(
@@ -1161,11 +1404,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } catch {}
       const deviceDest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + rel;
-      try { await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest)); }
-  catch (e) { vscode.window.showWarningMessage(`Board auto-upload failed for ${rel}: ${String((e as any)?.message ?? e)}`); }
+      try { await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest)); tree.addNode(deviceDest, false); }
+      catch (e) { vscode.window.showWarningMessage(`Board auto-upload failed for ${rel}: ${String((e as any)?.message ?? e)}`); }
     }),
     vscode.window.onDidCloseTerminal((terminal) => {
-  if (terminal === replTerminal || terminal.name === "Board REPL") {
+      if (terminal === replTerminal || terminal.name === "ESP32 REPL") {
         replTerminal = undefined;
       }
     })
@@ -1197,21 +1440,37 @@ async function getReplTerminal(context: vscode.ExtensionContext): Promise<vscode
   }
   const connect = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
   const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-  // Ejecutar miniterm dentro de un shell para que, al terminar/desconectarse,
-  // el terminal permanezca abierto y permita ver los últimos mensajes.
   const isWindows = process.platform === 'win32';
   if (isWindows) {
-    // En Windows: usar cmd con pausa al final
-    const cmd = `python -m serial.tools.miniterm ${device} 115200 & echo. & echo REPL terminado — presiona una tecla para cerrar... & pause`;
+    // Windows: keep trying to reconnect using PowerShell loop; filter error stack traces. Ctrl+C to stop.
+    // Print reconnect notice only once per session.
+    const cmd = `powershell -NoProfile -Command "python -c 'import serial' 2>$null; if ($LASTEXITCODE -ne 0) { echo 'ERROR: pyserial not installed. Install with: pip install pyserial' }; $once=$true; while ($true) { python -m serial.tools.miniterm ${device} 115200 2>&1 | Where-Object { $_ -notmatch '^--- exit ---|Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port|During handling of the above exception|os.read\(' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }"`;
     replTerminal = vscode.window.createTerminal({
       name: "ESP32 REPL",
       shellPath: "cmd.exe",
       shellArgs: ["/d", "/c", cmd]
     });
   } else {
-    // En macOS/Linux: usar bash/zsh con read al final
+    // macOS/Linux: try multiple Python commands; loop to auto-reconnect; filter traceback blocks; Ctrl+C to stop.
     const userShell = process.env.SHELL || '/bin/bash';
-    const cmd = `python3 -m serial.tools.miniterm ${device} 115200; echo; echo 'REPL terminado — presiona Enter para cerrar...'; read -r`;
+    const awkFilter = `awk 'BEGIN{skip=0}
+$0 ~ /^--- Miniterm on /{skip=0; print; next}
+$0 ~ /^--- Quit:/{skip=0; print; next}
+$0 ~ /^Exception in thread [rt]x:/{skip=1;next}
+index($0, "Traceback (most recent call last):")==1 {skip=1;next}
+index($0, "During handling of the above exception, another exception occurred:")==1 {skip=1;next}
+skip && $0 ~ /^$/{skip=0;next}
+$0 ~ /^--- exit ---$/{next}
+index($0, "could not open port ")==1 {next}
+index($0, "SerialException: read failed:") {next}
+index($0, "OSError: [Errno 6] Device not configured") {next}
+index($0, "os.read(") {next}
+$0 ~ /^[[:space:]]*\^+$/ {next}
+index($0, "serial/tools/miniterm.py") {next}
+index($0, "serial/serialposix.py") {next}
+index($0, "/threading.py") {next}
+skip==0 {print}'`;
+    const cmd = `ANNOUNCED=0; TRIED=0; while true; do if python3 -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using python3..."; ANNOUNCED=1; fi; python3 -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif python -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using python..."; ANNOUNCED=1; fi; python -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif /usr/bin/python3 -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using /usr/bin/python3..."; ANNOUNCED=1; fi; /usr/bin/python3 -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; else echo; echo "ERROR: pyserial not found in any Python installation."; echo "Try installing with one of:"; echo "  pip3 install pyserial"; echo "  python3 -m pip install pyserial"; echo "Available Pythons:"; which python3 python /usr/bin/python3 2>/dev/null || echo "  None found"; fi; if [ $TRIED -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; TRIED=1; fi; sleep 1; done`;
     replTerminal = vscode.window.createTerminal({
       name: "ESP32 REPL",
       shellPath: userShell,
@@ -1241,15 +1500,37 @@ async function openReplTerminal(context: vscode.ExtensionContext) {
   const cfg = vscode.workspace.getConfiguration();
   const interrupt = cfg.get<boolean>("mpyWorkbench.interruptOnConnect", true);
   const strict = cfg.get<boolean>("mpyWorkbench.strictConnect", true);
-  if (strict) {
-    await strictConnectHandshake(interrupt);
-  } else if (interrupt) {
-    try { await mp.reset(); } catch {}
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      if (strict) {
+        await strictConnectHandshake(interrupt);
+      } else if (interrupt) {
+        try { await mp.reset(); } catch {}
+      }
+      const term = await getReplTerminal(context);
+      term.show(true);
+      // tiny delay to ensure terminal connects before next action
+      await new Promise(r => setTimeout(r, 150));
+      return;
+    } catch (err: any) {
+      lastError = err;
+      const msg = String(err?.message || err).toLowerCase();
+      if (
+        msg.includes("device not configured") ||
+        msg.includes("serialexception") ||
+        msg.includes("serial port not found") ||
+        msg.includes("read failed")
+      ) {
+        // Wait and retry once
+        if (attempt === 1) await new Promise(r => setTimeout(r, 1200));
+        else throw err;
+      } else {
+        throw err;
+      }
+    }
   }
-  const term = await getReplTerminal(context);
-  term.show(true);
-  // tiny delay to ensure terminal connects before next action
-  await new Promise(r => setTimeout(r, 150));
+  if (lastError) throw lastError;
 }
 
 async function strictConnectHandshake(interrupt: boolean) {
@@ -1277,3 +1558,33 @@ function toLocalRelative(devicePath: string, rootPath: string): string {
   return devicePath.replace(/^\//, "");
 }
 // (no stray command registrations beyond this point)
+/*
+vscode.commands.registerCommand("mpyWorkbench.rename", async (node: Esp32Node) => {
+  if (!node) return;
+  const oldPath = node.path;
+  const isDir = node.kind === "dir";
+  const base = path.posix.dirname(oldPath);
+  const oldName = path.posix.basename(oldPath);
+  const newName = await vscode.window.showInputBox({
+    prompt: `Nuevo nombre para ${oldName}`,
+    value: oldName,
+    validateInput: v => v && v !== oldName ? undefined : "El nombre debe ser diferente y no vacío"
+  });
+  if (!newName || newName === oldName) return;
+  const newPath = base === "/" ? `/${newName}` : `${base}/${newName}`;
+  try {
+    if (typeof mp.rename === "function") {
+      await withAutoSuspend(() => mp.rename(oldPath, newPath));
+    } else if (typeof mp.mv === "function") {
+      await withAutoSuspend(() => mp.mv(oldPath, newPath));
+    } else {
+      vscode.window.showErrorMessage("No se encontró función de rename/mv en mp.");
+      return;
+    }
+    vscode.window.showInformationMessage(`Renombrado: ${oldPath} → ${newPath}`);
+    tree.refreshTree();
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Error al renombrar: ${err?.message ?? err}`);
+  }
+});
+*/

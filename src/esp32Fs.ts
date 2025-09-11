@@ -56,19 +56,78 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
     return item;
   }
 
+  // --- Incremental node cache and addNode method ---
+  private _nodeCache: Map<string, Esp32Node[]> = new Map();
+
+  /**
+   * Limpia el cache de nodos del árbol (para que desaparezcan los archivos listados).
+   */
+  clearCache(): void {
+    this._nodeCache.clear();
+  }
+
+  /**
+   * Agrega un nodo (archivo o carpeta) al árbol en memoria y refresca solo el padre.
+   * @param path Ruta absoluta en el board (ej: /foo/bar.txt)
+   * @param isDir true si es carpeta, false si es archivo
+   */
+  addNode(path: string, isDir: boolean) {
+    const parentPath = path.includes("/") ? path.replace(/\/[^\/]+$/, "") || "/" : "/";
+    const name = path.split("/").pop()!;
+    const node: Esp32Node = { kind: isDir ? "dir" : "file", name, path };
+    let siblings = this._nodeCache.get(parentPath);
+    if (!siblings) {
+      siblings = [];
+      this._nodeCache.set(parentPath, siblings);
+    }
+    // Evita duplicados
+    if (!siblings.some(n => n.name === name)) {
+      siblings.push(node);
+      // Ordena: carpetas primero, luego archivos, ambos alfabéticamente
+      siblings.sort((a, b) => (a.kind === b.kind) ? a.name.localeCompare(b.name) : (a.kind === "dir" ? -1 : 1));
+    }
+    // Refresca árbol (VS Code volverá a pedir getChildren; usaremos cache)
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** Elimina un nodo del árbol en memoria y refresca la vista. */
+  removeNode(path: string) {
+    const parentPath = path.includes("/") ? path.replace(/\/[^\/]+$/, "") || "/" : "/";
+    const name = path.split("/").pop()!;
+    const siblings = this._nodeCache.get(parentPath);
+    if (siblings) {
+      const idx = siblings.findIndex(n => n.name === name);
+      if (idx >= 0) siblings.splice(idx, 1);
+    }
+    // Si era carpeta, limpia su cache
+    this._nodeCache.delete(path);
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** Deja una carpeta en blanco en cache (útil tras borrar todo un directorio). */
+  resetDir(path: string) {
+    this._nodeCache.set(path, []);
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  // Modifica getChildNodes para usar el cache si existe
   async getChildNodes(element?: Esp32Node): Promise<(Esp32Node | "no-port")[]> {
     const port = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
     if (!port || port === "" || port === "auto") {
-      // No error: just return empty to trigger the view's welcome content with a button
       return [];
     }
-    
     const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
     const path = element?.path ?? rootPath;
+    // Permite forzar re-listado una vez (desde el botón Refresh)
+    const forceList = this.rawListOnlyOnce;
+    this.rawListOnlyOnce = false;
+    // Si hay cache para este path y no se fuerza re-listado, úsalo
+    if (!forceList && this._nodeCache.has(path)) {
+      return this._nodeCache.get(path)!;
+    }
     try {
       let entries: { name: string; isDir: boolean }[] | undefined;
       const usePyRaw = vscode.workspace.getConfiguration().get<boolean>("mpyWorkbench.usePyRawList", false);
-      this.rawListOnlyOnce = false;
       entries = await vscode.commands.executeCommand<{ name: string; isDir: boolean }[]>("mpyWorkbench.autoSuspendLs", path);
       if (!entries) {
         entries = usePyRaw ? await listDirPyRaw(path) : await mp.lsTyped(path);
@@ -140,6 +199,8 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
       }
       
       nodes.sort((a,b) => (a.kind === b.kind) ? a.name.localeCompare(b.name) : (a.kind === "dir" ? -1 : 1));
+      // Cachear este directorio para actualizaciones incrementales
+      this._nodeCache.set(path, nodes);
       return nodes;
     } catch (err: any) {
       // Only show error if it's not a "no port selected" issue

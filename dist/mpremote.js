@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.mvOnDevice = mvOnDevice;
 exports.setSerialNoticeSuppressed = setSerialNoticeSuppressed;
 exports.ls = ls;
 exports.lsTyped = lsTyped;
@@ -9,6 +10,7 @@ exports.cpFromDevice = cpFromDevice;
 exports.cpToDevice = cpToDevice;
 exports.uploadReplacing = uploadReplacing;
 exports.deleteFile = deleteFile;
+exports.deleteAny = deleteAny;
 exports.deleteFolderRecursive = deleteFolderRecursive;
 exports.fileExists = fileExists;
 exports.getFileInfo = getFileInfo;
@@ -17,6 +19,17 @@ exports.runFile = runFile;
 exports.reset = reset;
 exports.listTreeStats = listTreeStats;
 exports.cancelAll = cancelAll;
+async function mvOnDevice(src, dst) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    try {
+        await runTool(["mv", "--port", connect, "--src", src, "--dst", dst]);
+    }
+    catch (error) {
+        throw new Error(`Rename failed: ${error?.message || error}`);
+    }
+}
 const node_child_process_1 = require("node:child_process");
 const vscode = require("vscode");
 const path = require("node:path");
@@ -166,22 +179,14 @@ async function deleteFile(p) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
-    // First check if it's a file or directory
-    try {
-        const info = await runTool(["file_info", "--port", connect, "--path", p]);
-        if (info.stdout.includes("|dir|")) {
-            // It's a directory, use delete_folder_recursive
-            await runTool(["delete_folder_recursive", "--port", connect, "--path", p]);
-        }
-        else {
-            // It's a file, use delete_file
-            await runTool(["delete_file", "--port", connect, "--path", p]);
-        }
-    }
-    catch (error) {
-        // If we can't get info, try as file first
-        await runTool(["delete_file", "--port", connect, "--path", p]);
-    }
+    // Fast path: delete file or directory in a single call
+    await runTool(["delete_any", "--port", connect, "--path", p]);
+}
+async function deleteAny(p) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    await runTool(["delete_any", "--port", connect, "--path", p]);
 }
 async function deleteFolderRecursive(p) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
@@ -236,39 +241,23 @@ async function deleteAllInPath(rootPath) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     if (!connect || connect === "auto")
         throw new Error("Select a specific serial port first");
-    const deleted = [];
-    const errors = [];
     try {
-        // Get list of all files and folders
-        const items = await listTreeStats(rootPath);
-        // Group by folders and files, sort to delete files first, then folders (from deepest)
-        const files = items.filter(item => !item.isDir);
-        const dirs = items.filter(item => item.isDir).sort((a, b) => b.path.length - a.path.length); // Deepest first
-        // Delete files first
-        for (const file of files) {
-            try {
-                await runTool(["delete_file", "--port", connect, "--path", file.path]);
-                deleted.push(file.path);
-            }
-            catch (error) {
-                errors.push(`File ${file.path}: ${error?.message ?? String(error)}`);
-            }
+        const { stdout } = await runTool(["wipe_path", "--port", connect, "--path", rootPath]);
+        const s = String(stdout || "{}").trim();
+        let obj = {};
+        try {
+            obj = JSON.parse(s);
         }
-        // Delete folders (from deepest)
-        for (const dir of dirs) {
-            try {
-                await runTool(["delete_folder_recursive", "--port", connect, "--path", dir.path]);
-                deleted.push(dir.path);
-            }
-            catch (error) {
-                errors.push(`Directory ${dir.path}: ${error?.message ?? String(error)}`);
-            }
+        catch {
+            obj = {};
         }
+        const deletedCount = typeof obj.deleted_count === 'number' ? obj.deleted_count : 0;
+        const errorsArr = Array.isArray(obj.errors) ? obj.errors : [];
+        return { deleted: new Array(deletedCount).fill(""), errors: errorsArr, deleted_count: deletedCount, error_count: errorsArr.length };
     }
     catch (error) {
-        errors.push(`Failed to list directory contents: ${error?.message ?? String(error)}`);
+        return { deleted: [], errors: [String(error?.message || error)], deleted_count: 0, error_count: 1 };
     }
-    return { deleted, errors };
 }
 async function runFile(localPath) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");

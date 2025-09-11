@@ -1,3 +1,21 @@
+def cmd_mv(port, src, dst):
+    """Move or rename a file or folder on the board."""
+    code = (
+        "import os\n"
+        f"src=r\"{src}\"\n"
+        f"dst=r\"{dst}\"\n"
+        "try:\n os.rename(src, dst); print('OK', end='')\n"
+        "except Exception as e:\n print('ERR:'+str(e), end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code, wait_marker=False)
+        raw_exit(ser)
+    s = out.decode('utf-8', errors='ignore')
+    if s.startswith('OK'):
+        return True
+    else:
+        raise Exception(f"Rename failed: {s}")
 import argparse
 import base64
 import io
@@ -443,6 +461,125 @@ def cmd_delete_all_in_path(port, root_path):
     except:
         print(f"Deleted: {len(deleted)}, Errors: {len(errors)}")
 
+def cmd_wipe_path(port, root):
+    """Ultra-fast delete of all children under 'root' in a single raw REPL roundtrip."""
+    code = (
+        "import os\nDIR=0x4000\n"
+        f"root=r\"{root}\"\n"
+        "try:\n import ujson as json\nexcept: import json\n"
+        "errors=[]\n"
+        "deleted=0\n"
+        "def isdir(p):\n"
+        " try:\n  return (os.stat(p)[0] & DIR)!=0\n"
+        " except: return False\n"
+        "def rmrf(p):\n"
+        " global deleted\n"
+        " try:\n"
+        "  for n in os.listdir(p):\n"
+        "   fp=p+('/' if not p.endswith('/') else '')+n\n"
+        "   if isdir(fp):\n"
+        "    rmrf(fp)\n"
+        "    try:\n"
+        "     os.rmdir(fp)\n"
+        "     deleted += 1\n"
+        "    except Exception as e:\n"
+        "     errors.append('rmdir:'+fp+':'+str(e))\n"
+        "   else:\n"
+        "    try:\n"
+        "     os.remove(fp)\n"
+        "     deleted += 1\n"
+        "    except Exception as e:\n"
+        "     errors.append('remove:'+fp+':'+str(e))\n"
+        " except Exception as e:\n"
+        "  errors.append('list:'+p+':'+str(e))\n"
+        "try:\n"
+        " for n in os.listdir(root):\n"
+        "  fp=root+('/' if not root.endswith('/') else '')+n\n"
+        "  if isdir(fp):\n"
+        "   rmrf(fp)\n"
+        "   try:\n"
+        "    os.rmdir(fp)\n"
+        "    deleted += 1\n"
+        "   except Exception as e:\n"
+        "    errors.append('rmdir:'+fp+':'+str(e))\n"
+        "  else:\n"
+        "   try:\n"
+        "    os.remove(fp)\n"
+        "    deleted += 1\n"
+        "   except Exception as e:\n"
+        "    errors.append('remove:'+fp+':'+str(e))\n"
+        "except Exception as e:\n"
+        " errors.append('list_root:'+root+':'+str(e))\n"
+        "print('<thonny>'+json.dumps({'deleted_count':deleted,'error_count':len(errors),'errors':errors})+'</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    s = out.decode("utf-8", errors="ignore")
+    try:
+        a = s.split("<thonny>")[1].split("</thonny>")[0]
+        print(a)
+    except Exception:
+        print("{\"deleted_count\":0,\"error_count\":1,\"errors\":[\"wipe_failed\"]}")
+
+
+def cmd_delete_any(port, target):
+    """Delete a file or a folder (recursively) in a single roundtrip.
+    Prints JSON: { ok: bool, is_dir: bool, deleted: int, errors: [..] }
+    """
+    code = (
+        "import os\nDIR=0x4000\n"
+        f"p=r\"{target}\"\n"
+        "try:\n import ujson as json\nexcept: import json\n"
+        "errors=[]\n"
+        "deleted=0\n"
+        "def isdir(x):\n"
+        " try:\n  return (os.stat(x)[0] & DIR)!=0\n"
+        " except: return False\n"
+        "def rmrf(x):\n"
+        " global deleted\n"
+        " try:\n"
+        "  for n in os.listdir(x):\n"
+        "   fp=x+('/' if not x.endswith('/') else '')+n\n"
+        "   if isdir(fp):\n"
+        "    rmrf(fp)\n"
+        "    try:\n"
+        "     os.rmdir(fp); deleted += 1\n"
+        "    except Exception as e:\n"
+        "     errors.append('rmdir:'+fp+':'+str(e))\n"
+        "   else:\n"
+        "    try:\n"
+        "     os.remove(fp); deleted += 1\n"
+        "    except Exception as e:\n"
+        "     errors.append('remove:'+fp+':'+str(e))\n"
+        " except Exception as e:\n"
+        "  errors.append('list:'+x+':'+str(e))\n"
+        "isd=isdir(p)\n"
+        "if isd:\n"
+        " rmrf(p)\n"
+        " try:\n"
+        "  os.rmdir(p); deleted += 1\n"
+        " except Exception as e:\n"
+        "  errors.append('rmdir:'+p+':'+str(e))\n"
+        "else:\n"
+        " try:\n"
+        "  os.remove(p); deleted += 1\n"
+        " except Exception as e:\n"
+        "  errors.append('remove:'+p+':'+str(e))\n"
+        "print('<thonny>'+json.dumps({'ok':len(errors)==0,'is_dir':isd,'deleted':deleted,'errors':errors})+'</thonny>',end='')\n"
+    )
+    with open_ser(port) as ser:
+        raw_enter(ser)
+        out = raw_exec(ser, code)
+        raw_exit(ser)
+    s = out.decode("utf-8", errors="ignore")
+    try:
+        a = s.split("<thonny>")[1].split("</thonny>")[0]
+        print(a)
+    except Exception:
+        print("{\"ok\":false,\"is_dir\":false,\"deleted\":0,\"errors\":[\"delete_any_failed\"]}")
+
 
 def cmd_tree_stats_json(port, root):
     """Version that returns JSON directly"""
@@ -519,6 +656,10 @@ def main():
     p_res = sub.add_parser("reset"); p_res.add_argument("--port", required=True)
     p_tree = sub.add_parser("tree_stats"); p_tree.add_argument("--port", required=True); p_tree.add_argument("--path", required=True)
     p_delete_all = sub.add_parser("delete_all_in_path"); p_delete_all.add_argument("--port", required=True); p_delete_all.add_argument("--path", required=True)
+    p_delete_any = sub.add_parser("delete_any"); p_delete_any.add_argument("--port", required=True); p_delete_any.add_argument("--path", required=True)
+    p_wipe = sub.add_parser("wipe_path"); p_wipe.add_argument("--port", required=True); p_wipe.add_argument("--path", required=True)
+
+    p_mv = sub.add_parser("mv"); p_mv.add_argument("--port", required=True); p_mv.add_argument("--src", required=True); p_mv.add_argument("--dst", required=True)
 
     args = ap.parse_args()
     if args.cmd == "devs":
@@ -555,6 +696,12 @@ def main():
         return cmd_file_info(args.port, args.path)
     if args.cmd == "delete_all_in_path":
         return cmd_delete_all_in_path(args.port, args.path)
+    if args.cmd == "delete_any":
+        return cmd_delete_any(args.port, args.path)
+    if args.cmd == "wipe_path":
+        return cmd_wipe_path(args.port, args.path)
+    if args.cmd == "mv":
+        return cmd_mv(args.port, args.src, args.dst)
 
 
 def _friendly_os_error(e: OSError) -> str:

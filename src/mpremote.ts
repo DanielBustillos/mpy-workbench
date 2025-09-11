@@ -1,3 +1,12 @@
+export async function mvOnDevice(src: string, dst: string): Promise<void> {
+  const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
+  if (!connect || connect === "auto") throw new Error("Select a specific serial port first");
+  try {
+    await runTool(["mv", "--port", connect, "--src", src, "--dst", dst]);
+  } catch (error: any) {
+    throw new Error(`Rename failed: ${error?.message || error}`);
+  }
+}
 import { execFile, ChildProcess } from "node:child_process";
 import * as vscode from "vscode";
 import * as path from "node:path";
@@ -152,21 +161,14 @@ export async function uploadReplacing(localPath: string, devicePath: string): Pr
 export async function deleteFile(p: string): Promise<void> {
   const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
   if (!connect || connect === "auto") throw new Error("Select a specific serial port first");
-  
-  // First check if it's a file or directory
-  try {
-    const info = await runTool(["file_info", "--port", connect, "--path", p]);
-    if (info.stdout.includes("|dir|")) {
-      // It's a directory, use delete_folder_recursive
-      await runTool(["delete_folder_recursive", "--port", connect, "--path", p]);
-    } else {
-      // It's a file, use delete_file
-      await runTool(["delete_file", "--port", connect, "--path", p]);
-    }
-  } catch (error) {
-    // If we can't get info, try as file first
-    await runTool(["delete_file", "--port", connect, "--path", p]);
-  }
+  // Fast path: delete file or directory in a single call
+  await runTool(["delete_any", "--port", connect, "--path", p]);
+}
+
+export async function deleteAny(p: string): Promise<void> {
+  const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
+  if (!connect || connect === "auto") throw new Error("Select a specific serial port first");
+  await runTool(["delete_any", "--port", connect, "--path", p]);
 }
 
 export async function deleteFolderRecursive(p: string): Promise<void> {
@@ -218,46 +220,20 @@ export async function getFileInfo(p: string): Promise<{mode: number, size: numbe
   }
 }
 
-export async function deleteAllInPath(rootPath: string): Promise<{deleted: string[], errors: string[]}> {
+export async function deleteAllInPath(rootPath: string): Promise<{deleted: string[], errors: string[], deleted_count?: number, error_count?: number}> {
   const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
   if (!connect || connect === "auto") throw new Error("Select a specific serial port first");
-  
-  const deleted: string[] = [];
-  const errors: string[] = [];
-  
   try {
-    // Get list of all files and folders
-    const items = await listTreeStats(rootPath);
-    
-    // Group by folders and files, sort to delete files first, then folders (from deepest)
-    const files = items.filter(item => !item.isDir);
-    const dirs = items.filter(item => item.isDir).sort((a, b) => b.path.length - a.path.length); // Deepest first
-    
-    // Delete files first
-    for (const file of files) {
-      try {
-        await runTool(["delete_file", "--port", connect, "--path", file.path]);
-        deleted.push(file.path);
-      } catch (error: any) {
-        errors.push(`File ${file.path}: ${error?.message ?? String(error)}`);
-      }
-    }
-    
-    // Delete folders (from deepest)
-    for (const dir of dirs) {
-      try {
-        await runTool(["delete_folder_recursive", "--port", connect, "--path", dir.path]);
-        deleted.push(dir.path);
-      } catch (error: any) {
-        errors.push(`Directory ${dir.path}: ${error?.message ?? String(error)}`);
-      }
-    }
-    
+    const { stdout } = await runTool(["wipe_path", "--port", connect, "--path", rootPath]);
+    const s = String(stdout || "{}").trim();
+    let obj: any = {};
+    try { obj = JSON.parse(s); } catch { obj = {}; }
+    const deletedCount = typeof obj.deleted_count === 'number' ? obj.deleted_count : 0;
+    const errorsArr = Array.isArray(obj.errors) ? obj.errors : [];
+    return { deleted: new Array(deletedCount).fill("") as string[], errors: errorsArr, deleted_count: deletedCount, error_count: errorsArr.length };
   } catch (error: any) {
-    errors.push(`Failed to list directory contents: ${error?.message ?? String(error)}`);
+    return { deleted: [], errors: [String(error?.message || error)], deleted_count: 0, error_count: 1 };
   }
-  
-  return { deleted, errors };
 }
 
 export async function runFile(localPath: string): Promise<{ stdout: string; stderr: string }>{

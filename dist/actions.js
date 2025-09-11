@@ -29,6 +29,9 @@ class ActionsTree {
         else if (element.id === "stop") {
             item.iconPath = new vscode.ThemeIcon("debug-stop", new vscode.ThemeColor("charts.red"));
         }
+        else if (element.id === "softReset") {
+            item.iconPath = new vscode.ThemeIcon("debug-restart", new vscode.ThemeColor("charts.blue"));
+        }
         else if (element.id === "sendCtrlC") {
             item.iconPath = new vscode.ThemeIcon("zap", new vscode.ThemeColor("charts.yellow"));
         }
@@ -52,8 +55,9 @@ class ActionsTree {
     async getActionNodes() {
         return [
             { id: "runActive", label: "Run Active File", command: "mpyWorkbench.runActiveFile" },
-            { id: "openRepl", label: "Open REPL Terminal", command: "mpyWorkbench.openRepl" },
+            { id: "openRepl", label: "Open ESP32 REPL", command: "mpyWorkbench.openRepl" },
             { id: "stop", label: "Stop (Ctrl-C, Ctrl-A, Ctrl-D)", command: "mpyWorkbench.stop" },
+            { id: "softReset", label: "Soft Reset (Ctrl-D)", command: "mpyWorkbench.softReset" },
             { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" }
         ];
     }
