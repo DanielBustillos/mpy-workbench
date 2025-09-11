@@ -434,6 +434,11 @@
           "type": "boolean",
           "default": false,
           "description": "List directories using a Python raw REPL script (requires python3 + pyserial)."
+        },
+        "mpyWorkbench.baudRate": {
+          "type": "number",
+          "default": 115200,
+          "description": "Serial baud rate for UART bridges (ignored on native USB CDC). Try 921600 or 1500000 if your board/adapter supports it."
         }
       }
     }

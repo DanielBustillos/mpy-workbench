@@ -47,7 +47,7 @@ index($0, "could not open port ")==1 {next}
 index($0, "SerialException: read failed:") {next}
 index($0, "OSError: [Errno 6] Device not configured") {next}
 index($0, "os.read(") {next}
-$0 ~ /^[[:space:]]*\^+$/ {next}
+/^[[:space:]]*[\\^]+$/ {next}
 index($0, "serial/tools/miniterm.py") {next}
 index($0, "serial/serialposix.py") {next}
 index($0, "/threading.py") {next}
@@ -299,6 +299,15 @@ function activate(context) {
     }
     // Initialize status bar on activation
     refreshAutoSyncStatus();
+    // Ensure sensible ignore files exist or are upgraded from old stub
+    try {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (ws) {
+            ensureRootIgnoreFile(ws.uri.fsPath).catch(() => { });
+            ensureWorkbenchIgnoreFile(ws.uri.fsPath).catch(() => { });
+        }
+    }
+    catch { }
     let opQueue = Promise.resolve();
     let listingInProgress = false;
     let skipIdleOnce = false;
@@ -1463,7 +1472,7 @@ index($0, "could not open port ")==1 {next}
 index($0, "SerialException: read failed:") {next}
 index($0, "OSError: [Errno 6] Device not configured") {next}
 index($0, "os.read(") {next}
-$0 ~ /^[[:space:]]*\^+$/ {next}
+/^[[:space:]]*[\\^]+$/ {next}
 index($0, "serial/tools/miniterm.py") {next}
 index($0, "serial/serialposix.py") {next}
 index($0, "/threading.py") {next}

@@ -26,8 +26,9 @@ import time
 import serial
 from serial.tools import list_ports
 
+# Default baud rate. Can be overridden by CLI --baud or env MPY_WORKBENCH_BAUD
+BAUD = int(os.environ.get("MPY_WORKBENCH_BAUD", "115200"))
 BAUD = 115200
-
 
 def open_ser(port):
     """Open a serial port with a sane timeout.
@@ -47,6 +48,25 @@ def raw_enter(ser):
 def raw_exit(ser):
     ser.write(b"\x02")
     time.sleep(0.05)
+
+
+def warmup_handshake(ser):
+    """Send extra interrupts and soft-resets to stabilize REPL before running code.
+    Two Ctrl-C and two Ctrl-D often clear stuck tasks and flush buffers.
+    """
+    try:
+        ser.write(b"\x03\x03")  # two interrupts
+        time.sleep(0.12)
+        ser.reset_input_buffer()
+        ser.write(b"\x04")  # soft reset
+        time.sleep(0.15)
+        ser.reset_input_buffer()
+        ser.write(b"\x04")  # second soft reset
+        time.sleep(0.18)
+        ser.reset_input_buffer()
+    except Exception:
+        # Ignore handshake errors; subsequent raw_enter may still succeed
+        pass
 
 
 def raw_exec(ser, code, wait_marker=True):
@@ -339,6 +359,7 @@ def cmd_run_file(port, src):
     with open(src, "r", encoding="utf-8") as f:
         code = f.read()
     with open_ser(port) as ser:
+        warmup_handshake(ser)
         raw_enter(ser)
         out = raw_exec(ser, code, wait_marker=False)
         raw_exit(ser)
@@ -636,6 +657,8 @@ def cmd_tree_stats(port, root):
 
 def main():
     ap = argparse.ArgumentParser()
+    # Global optional baud override
+    ap.add_argument("--baud", type=int, default=None, help="Baud rate (default: 115200; may be ignored on USB CDC)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("devs")
@@ -662,6 +685,10 @@ def main():
     p_mv = sub.add_parser("mv"); p_mv.add_argument("--port", required=True); p_mv.add_argument("--src", required=True); p_mv.add_argument("--dst", required=True)
 
     args = ap.parse_args()
+    # Apply global baud override if provided
+    if getattr(args, "baud", None):
+        global BAUD
+        BAUD = int(args.baud)
     if args.cmd == "devs":
         return cmd_devs()
     if args.cmd == "ls":

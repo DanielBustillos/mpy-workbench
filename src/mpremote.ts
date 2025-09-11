@@ -83,7 +83,10 @@ function maybeNotifySerialStatus(msg: string): void {
 function runTool(args: string[], opts: { cwd?: string } = {}): Promise<{ stdout: string; stderr: string }>{
   return new Promise((resolve, reject) => {
     const execOnce = (attempt: number) => {
-      const child = execFile("python3", [toolPath(), ...args], { cwd: opts.cwd }, (err, stdout, stderr) => {
+      const cfg = vscode.workspace.getConfiguration();
+      const baud = cfg.get<number>("mpyWorkbench.baudRate", 115200) || 115200;
+      const argsWithBaud = ["--baud", String(baud), ...args];
+      const child = execFile("python3", [toolPath(), ...argsWithBaud], { cwd: opts.cwd }, (err, stdout, stderr) => {
         if (currentChild === child) currentChild = null;
         if (err) {
           const emsg = String(stderr || err?.message || "");
