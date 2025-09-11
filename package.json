@@ -3,7 +3,7 @@
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via raw REPL (pyserial).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "DanielBucam",
   "engines": {
     "vscode": "^1.84.0"
