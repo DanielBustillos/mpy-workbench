@@ -4,6 +4,7 @@ exports.PythonInterpreterManager = void 0;
 exports.getPythonPath = getPythonPath;
 exports.getPythonCommandForTerminal = getPythonCommandForTerminal;
 exports.clearPythonCache = clearPythonCache;
+exports.checkPyserialAvailability = checkPyserialAvailability;
 const vscode = require("vscode");
 const path = require("node:path");
 const node_child_process_1 = require("node:child_process");
@@ -28,9 +29,16 @@ class PythonInterpreterManager {
         try {
             // Method 1: Try to get from Python extension API
             pythonPath = await this.getPythonFromExtensionAPI(workspaceFolder);
-            if (pythonPath && await this.validatePythonPath(pythonPath)) {
-                this.cacheResult(pythonPath);
-                return pythonPath;
+            if (pythonPath) {
+                const validation = await this.validatePythonPath(pythonPath);
+                if (validation.valid) {
+                    this.cacheResult(pythonPath);
+                    return pythonPath;
+                }
+                else if (validation.missingPyserial) {
+                    // Show pyserial installation notification
+                    this.showPyserialInstallationNotification(pythonPath);
+                }
             }
         }
         catch (error) {
@@ -39,9 +47,16 @@ class PythonInterpreterManager {
         try {
             // Method 2: Try to get from VS Code configuration
             pythonPath = this.getPythonFromConfiguration(workspaceFolder);
-            if (pythonPath && await this.validatePythonPath(pythonPath)) {
-                this.cacheResult(pythonPath);
-                return pythonPath;
+            if (pythonPath) {
+                const validation = await this.validatePythonPath(pythonPath);
+                if (validation.valid) {
+                    this.cacheResult(pythonPath);
+                    return pythonPath;
+                }
+                else if (validation.missingPyserial) {
+                    // Show pyserial installation notification
+                    this.showPyserialInstallationNotification(pythonPath);
+                }
             }
         }
         catch (error) {
@@ -51,9 +66,15 @@ class PythonInterpreterManager {
         const fallbacks = this.getFallbackPythonPaths();
         for (const fallback of fallbacks) {
             try {
-                if (await this.validatePythonPath(fallback)) {
+                const validation = await this.validatePythonPath(fallback);
+                if (validation.valid) {
                     this.cacheResult(fallback);
                     return fallback;
+                }
+                else if (validation.missingPyserial) {
+                    // Show pyserial installation notification for the first valid Python we find
+                    this.showPyserialInstallationNotification(fallback);
+                    // Continue looking for a working Python with pyserial
                 }
             }
             catch (error) {
@@ -168,11 +189,93 @@ class PythonInterpreterManager {
             const { stdout } = await execFileAsync(pythonPath, ['-c', 'import sys; print(sys.version)'], { timeout: 5000 });
             // Check if it has the required serial module
             await execFileAsync(pythonPath, ['-c', 'import serial; from serial.tools import list_ports'], { timeout: 5000 });
-            return true;
+            return { valid: true, missingPyserial: false };
         }
         catch (error) {
-            return false;
+            const errorMessage = error.message || String(error);
+            // Check if it's specifically a pyserial import error
+            if (errorMessage.includes('No module named') && errorMessage.includes('serial')) {
+                return { valid: false, missingPyserial: true, error: errorMessage };
+            }
+            // Other Python-related errors
+            return { valid: false, missingPyserial: false, error: errorMessage };
         }
+    }
+    /**
+     * Show notification for missing pyserial
+     */
+    static showPyserialInstallationNotification(pythonPath) {
+        // Check cooldown to avoid spamming notifications
+        const now = Date.now();
+        if (now - this.lastPyserialNotification < this.NOTIFICATION_COOLDOWN) {
+            return; // Too soon since last notification
+        }
+        this.lastPyserialNotification = now;
+        const isWindows = process.platform === 'win32';
+        const isMac = process.platform === 'darwin';
+        let installCommand;
+        let packageManager;
+        if (isWindows) {
+            installCommand = `${pythonPath} -m pip install pyserial`;
+            packageManager = 'pip';
+        }
+        else if (isMac) {
+            installCommand = `${pythonPath} -m pip install pyserial`;
+            packageManager = 'pip (o usa Homebrew: brew install pyserial)';
+        }
+        else {
+            // Linux
+            installCommand = `${pythonPath} -m pip install pyserial`;
+            packageManager = 'pip (o usa apt: sudo apt install python3-serial)';
+        }
+        const message = `MPY Workbench requiere el paquete 'pyserial' para comunicarse con tu placa MicroPython.`;
+        vscode.window.showWarningMessage(message, 'Instalar pyserial', 'Más información').then(selection => {
+            if (selection === 'Instalar pyserial') {
+                // Try to install pyserial automatically
+                vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Instalando pyserial...',
+                    cancellable: false
+                }, async (progress) => {
+                    try {
+                        progress.report({ increment: 0, message: 'Instalando pyserial...' });
+                        // Run the installation command
+                        const installProcess = require('child_process').exec(installCommand);
+                        return new Promise((resolve, reject) => {
+                            installProcess.on('close', (code) => {
+                                if (code === 0) {
+                                    progress.report({ increment: 100, message: 'Instalación completada' });
+                                    vscode.window.showInformationMessage('pyserial se instaló correctamente. Reinicia VS Code para que los cambios surtan efecto.');
+                                    // Clear cache so it will re-validate on next use
+                                    this.clearCache();
+                                    resolve();
+                                }
+                                else {
+                                    reject(new Error(`Instalación fallida con código ${code}`));
+                                }
+                            });
+                            installProcess.on('error', (error) => {
+                                reject(error);
+                            });
+                        });
+                    }
+                    catch (error) {
+                        vscode.window.showErrorMessage(`Error instalando pyserial: ${error.message}. Instala manualmente con: ${installCommand}`);
+                    }
+                });
+            }
+            else if (selection === 'Más información') {
+                // Open the README or show more detailed instructions
+                const moreInfoMessage = `Para instalar pyserial:
+
+1. Abre una terminal
+2. Ejecuta: ${installCommand}
+3. Reinicia VS Code
+
+O visita: https://pypi.org/project/pyserial/`;
+                vscode.window.showInformationMessage(moreInfoMessage);
+            }
+        });
     }
     /**
      * Cache the result for performance
@@ -187,6 +290,25 @@ class PythonInterpreterManager {
     static clearCache() {
         this.cachedInterpreter = null;
         this.lastCacheTime = 0;
+    }
+    /**
+     * Check pyserial availability and show notification if missing
+     * This can be called on extension activation to proactively notify users
+     */
+    static async checkPyserialAvailability() {
+        try {
+            const pythonPath = await this.getPythonPath();
+            const validation = await this.validatePythonPath(pythonPath);
+            if (!validation.valid && validation.missingPyserial) {
+                this.showPyserialInstallationNotification(pythonPath);
+                return false;
+            }
+            return validation.valid;
+        }
+        catch (error) {
+            console.log('Error checking pyserial availability:', error);
+            return false;
+        }
     }
     /**
      * Get Python command for terminal usage (handles special cases like 'py -3')
@@ -208,6 +330,8 @@ exports.PythonInterpreterManager = PythonInterpreterManager;
 PythonInterpreterManager.cachedInterpreter = null;
 PythonInterpreterManager.lastCacheTime = 0;
 PythonInterpreterManager.CACHE_DURATION = 30000; // 30 seconds
+PythonInterpreterManager.lastPyserialNotification = 0;
+PythonInterpreterManager.NOTIFICATION_COOLDOWN = 300000; // 5 minutes
 /**
  * Convenience function to get Python path
  */
@@ -225,5 +349,11 @@ async function getPythonCommandForTerminal(workspaceFolder) {
  */
 function clearPythonCache() {
     PythonInterpreterManager.clearCache();
+}
+/**
+ * Check pyserial availability and show notification if missing
+ */
+async function checkPyserialAvailability() {
+    return PythonInterpreterManager.checkPyserialAvailability();
 }
 //# sourceMappingURL=pythonInterpreter.js.map

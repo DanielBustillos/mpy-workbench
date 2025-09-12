@@ -118,6 +118,10 @@ function activate(context) {
     }).catch(error => {
         vscode.window.showWarningMessage(`Error checking Python dependencies: ${error.message}`);
     });
+    // Check pyserial availability proactively
+    (0, pythonInterpreter_1.checkPyserialAvailability)().catch(error => {
+        console.log('Error during pyserial availability check:', error);
+    });
     // Helper to get workspace folder or throw error
     function getWorkspaceFolder() {
         const ws = vscode.workspace.workspaceFolders?.[0];
