@@ -8,6 +8,7 @@ export class ControlTree implements vscode.TreeDataProvider<ControlNode> {
 
   refresh(): void { this._onDidChangeTreeData.fire(); }
 
+  
   getTreeItem(element: ControlNode): vscode.TreeItem {
     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
     item.contextValue = "control";

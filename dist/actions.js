@@ -55,10 +55,10 @@ class ActionsTree {
     async getActionNodes() {
         return [
             { id: "runActive", label: "Run Active File", command: "mpyWorkbench.runActiveFile" },
-            { id: "openRepl", label: "Open ESP32 REPL", command: "mpyWorkbench.openRepl" },
-            { id: "stop", label: "Stop (Ctrl-C, Ctrl-A, Ctrl-D)", command: "mpyWorkbench.stop" },
-            { id: "softReset", label: "Soft Reset (Ctrl-D)", command: "mpyWorkbench.softReset" },
-            { id: "sendCtrlC", label: "Interrupt (Ctrl-C, Ctrl-B)", command: "mpyWorkbench.serialSendCtrlC" }
+            { id: "openRepl", label: "Open Repl", command: "mpyWorkbench.openRepl" },
+            { id: "stop", label: "Stop", command: "mpyWorkbench.stop" },
+            { id: "softReset", label: "Soft Reset", command: "mpyWorkbench.softReset" },
+            { id: "sendCtrlC", label: "Interrupt", command: "mpyWorkbench.serialSendCtrlC" }
         ];
     }
 }

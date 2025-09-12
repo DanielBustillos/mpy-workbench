@@ -2,126 +2,22 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
-// Disconnect the ESP32 REPL terminal but leave it open
-async function disconnectReplTerminal() {
-    if (replTerminal) {
-        try {
-            // Sequence to exit miniterm cleanly: Ctrl-] then 'q' + Enter
-            replTerminal.sendText("\x1d", false); // Ctrl-]
-            await new Promise(r => setTimeout(r, 120));
-            replTerminal.sendText("q", false);
-            await new Promise(r => setTimeout(r, 60));
-            replTerminal.sendText("\r", false);
-            await new Promise(r => setTimeout(r, 200));
-        }
-        catch { }
-    }
-}
-async function restartReplInExistingTerminal() {
-    if (!replTerminal)
-        return;
-    try {
-        const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
-        if (!connect || connect === "auto")
-            return;
-        const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-        const isWindows = process.platform === 'win32';
-        if (isWindows) {
-            // Use PowerShell loop to auto-reconnect until available. Filter error stack traces.
-            // Print the reconnect notice only once per session.
-            (0, pythonInterpreter_1.getPythonCommandForTerminal)().then(pythonCmd => {
-                const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm '${device}' 115200 --raw 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
-                if (replTerminal)
-                    replTerminal.sendText(cmd, true);
-            }).catch(() => {
-                // Fallback to python if getPythonCommandForTerminal fails
-                const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { python -m serial.tools.miniterm '${device}' 115200 --raw 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
-                if (replTerminal)
-                    replTerminal.sendText(cmd, true);
-            });
-        }
-        else {
-            // Loop forever: rerun miniterm on disconnect, allow Ctrl+C to stop; filter traceback blocks.
-            // Print the reconnect notice only once per session.
-            (0, pythonInterpreter_1.getPythonCommandForTerminal)().then(pythonCmd => {
-                const cmd = `shown=0; while true; do ( ${pythonCmd} -m serial.tools.miniterm ${device} 115200 --raw 2>&1 | awk 'BEGIN{skip=0}
-$0 ~ /^--- Miniterm on /{skip=0; print; next}
-$0 ~ /^--- Quit:/{skip=0; print; next}
-$0 ~ /^Exception in thread [rt]x:/{skip=1;next}
-index($0, "Traceback (most recent call last):")==1 {skip=1;next}
-index($0, "During handling of the above exception, another exception occurred:")==1 {skip=1;next}
-skip && $0 ~ /^$/{skip=0;next}
-$0 ~ /^--- exit ---$/{next}
-index($0, "could not open port ")==1 {next}
-index($0, "SerialException: read failed:") {next}
-index($0, "OSError: [Errno 6] Device not configured") {next}
-index($0, "os.read(") {next}
-/^[[:space:]]*[\\^]+$/ {next}
-index($0, "serial/tools/miniterm.py") {next}
-index($0, "serial/serialposix.py") {next}
-index($0, "/threading.py") {next}
-skip==0 {print}' ); if [ $shown -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; shown=1; fi; sleep 1; done`;
-                if (replTerminal)
-                    replTerminal.sendText(cmd, true);
-            }).catch(() => {
-                // Fallback to python3 if getPythonCommandForTerminal fails
-                const cmd = `shown=0; while true; do ( python3 -m serial.tools.miniterm ${device} 115200 --raw 2>&1 | awk 'BEGIN{skip=0}
-$0 ~ /^--- Miniterm on /{skip=0; print; next}
-$0 ~ /^--- Quit:/{skip=0; print; next}
-$0 ~ /^Exception in thread [rt]x:/{skip=1;next}
-index($0, "Traceback (most recent call last):")==1 {skip=1;next}
-index($0, "During handling of the above exception, another exception occurred:")==1 {skip=1;next}
-skip && $0 ~ /^$/{skip=0;next}
-$0 ~ /^--- exit ---$/{next}
-index($0, "could not open port ")==1 {next}
-index($0, "SerialException: read failed:") {next}
-index($0, "OSError: [Errno 6] Device not configured") {next}
-index($0, "os.read(") {next}
-/^[[:space:]]*[\\^]+$/ {next}
-index($0, "serial/tools/miniterm.py") {next}
-index($0, "serial/serialposix.py") {next}
-index($0, "/threading.py") {next}
-skip==0 {print}' ); if [ $shown -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; shown=1; fi; sleep 1; done`;
-                if (replTerminal)
-                    replTerminal.sendText(cmd, true);
-            });
-        }
-        await new Promise(r => setTimeout(r, 200));
-    }
-    catch { }
-}
 const vscode = require("vscode");
 const esp32Fs_1 = require("./esp32Fs");
 const actions_1 = require("./actions");
 const syncView_1 = require("./syncView");
 const mp = require("./mpremote");
+const mpremote_1 = require("./mpremote");
 const path = require("node:path");
 const fs = require("node:fs/promises");
-const node_child_process_1 = require("node:child_process");
 const sync_1 = require("./sync");
 const decorations_1 = require("./decorations");
 const pyraw_1 = require("./pyraw");
-const pythonInterpreter_1 = require("./pythonInterpreter");
 // import { monitor } from "./monitor"; // switched to auto-suspend REPL strategy
+const mpremoteCommands_1 = require("./mpremoteCommands");
 function activate(context) {
-    // Validate Python dependencies on extension activation
-    const { execFile } = require('node:child_process');
-    const pyScript = path.join(context.extensionPath, 'scripts', 'check_python_deps.py');
-    // Use the configured Python interpreter for dependency check
-    (0, pythonInterpreter_1.getPythonPath)().then(pythonPath => {
-        execFile(pythonPath, [pyScript], (err, stdout, stderr) => {
-            const out = String(stdout || '').trim();
-            if (out === 'ok')
-                return;
-            vscode.window.showWarningMessage('Missing dependency: pyserial. Install pyserial in the Python environment used by the extension to detect ports and communicate with the device.');
-        });
-    }).catch(error => {
-        vscode.window.showWarningMessage(`Error checking Python dependencies: ${error.message}`);
-    });
-    // Check pyserial availability proactively
-    (0, pythonInterpreter_1.checkPyserialAvailability)().catch(error => {
-        console.log('Error during pyserial availability check:', error);
-    });
+    // Check if mpremote is available
+    (0, mpremoteCommands_1.checkMpremoteAvailability)().catch(() => { });
     // Helper to get workspace folder or throw error
     function getWorkspaceFolder() {
         const ws = vscode.workspace.workspaceFolders?.[0];
@@ -376,27 +272,22 @@ function activate(context) {
         // If auto-suspend disabled or explicitly skipping for this view action, run without ensureIdle/REPL juggling
         if (!enabled || skipIdleOnce) {
             skipIdleOnce = false;
-            mp.setSerialNoticeSuppressed(true);
             try {
                 return await fn();
             }
-            finally {
-                mp.setSerialNoticeSuppressed(false);
-            }
+            finally { }
         }
         opQueue = opQueue.catch(() => { }).then(async () => {
-            const wasOpen = isReplOpen();
+            const wasOpen = (0, mpremoteCommands_1.isReplOpen)();
             if (wasOpen)
-                await disconnectReplTerminal();
+                await (0, mpremoteCommands_1.disconnectReplTerminal)();
             try {
-                mp.setSerialNoticeSuppressed(true);
                 await ensureIdle();
                 return await fn();
             }
             finally {
-                mp.setSerialNoticeSuppressed(false);
                 if (wasOpen)
-                    await restartReplInExistingTerminal();
+                    await (0, mpremoteCommands_1.restartReplInExistingTerminal)();
             }
         });
         return opQueue;
@@ -406,12 +297,68 @@ function activate(context) {
         tree.clearCache();
         tree.enableRawListForNext();
         tree.refreshTree();
+    }), vscode.commands.registerCommand("mpyWorkbench.refreshFileTreeCache", async () => {
+        try {
+            console.log("[DEBUG] Starting manual file tree cache refresh...");
+            await mp.refreshFileTreeCache();
+            console.log("[DEBUG] File tree cache refresh completed");
+            vscode.window.showInformationMessage("File tree cache refreshed successfully");
+        }
+        catch (error) {
+            console.error("[DEBUG] File tree cache refresh failed:", error);
+            vscode.window.showErrorMessage(`File tree cache refresh failed: ${error?.message || error}`);
+        }
+    }), vscode.commands.registerCommand("mpyWorkbench.rebuildManifest", async () => {
+        try {
+            console.log("[DEBUG] Starting manual manifest rebuild...");
+            const ws = vscode.workspace.workspaceFolders?.[0];
+            if (!ws) {
+                vscode.window.showErrorMessage("No workspace folder open");
+                return;
+            }
+            // Ensure directories exist
+            await ensureRootIgnoreFile(ws.uri.fsPath);
+            await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
+            // Rebuild manifest
+            const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
+            const newManifest = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher);
+            const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
+            await (0, sync_1.saveManifest)(manifestPath, newManifest);
+            console.log("[DEBUG] Manifest rebuild completed");
+            vscode.window.showInformationMessage(`Manifest rebuilt successfully (${Object.keys(newManifest.files).length} files)`);
+        }
+        catch (error) {
+            console.error("[DEBUG] Manifest rebuild failed:", error);
+            vscode.window.showErrorMessage(`Manifest rebuild failed: ${error?.message || error}`);
+        }
+    }), vscode.commands.registerCommand("mpyWorkbench.debugTreeParsing", async () => {
+        try {
+            console.log("[DEBUG] Starting tree parsing debug...");
+            await (0, mpremote_1.debugTreeParsing)();
+            console.log("[DEBUG] Tree parsing debug completed");
+            vscode.window.showInformationMessage("Tree parsing debug completed - check console for details");
+        }
+        catch (error) {
+            console.error("[DEBUG] Tree parsing debug failed:", error);
+            vscode.window.showErrorMessage(`Tree parsing debug failed: ${error?.message || error}`);
+        }
+    }), vscode.commands.registerCommand("mpyWorkbench.debugFilesystemStatus", async () => {
+        try {
+            console.log("[DEBUG] Starting filesystem status debug...");
+            await (0, mpremote_1.debugFilesystemStatus)();
+            console.log("[DEBUG] Filesystem status debug completed");
+            vscode.window.showInformationMessage("Filesystem status debug completed - check console for details");
+        }
+        catch (error) {
+            console.error("[DEBUG] Filesystem status debug failed:", error);
+            vscode.window.showErrorMessage(`Filesystem status debug failed: ${error?.message || error}`);
+        }
     }), vscode.commands.registerCommand("mpyWorkbench.pickPort", async () => {
         // Always get the most recent port list before showing the selector
-        const ports = await mp.listSerialPorts();
+        const devices = await mp.listSerialPorts();
         const items = [
             { label: "auto", description: "Auto-detect device" },
-            ...ports.map(p => ({ label: p, description: "serial port" }))
+            ...devices.map(d => ({ label: d.port, description: d.name || "serial port" }))
         ];
         const picked = await vscode.window.showQuickPick(items, { placeHolder: "Select Board serial port" });
         if (!picked)
@@ -423,118 +370,7 @@ function activate(context) {
         tree.clearCache();
         tree.refreshTree();
         // (no prompt) just refresh the tree after selecting port
-    }), vscode.commands.registerCommand("mpyWorkbench.serialSendCtrlC", async () => {
-        const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
-        if (!connect || connect === "auto") {
-            vscode.window.showWarningMessage("Select a specific serial port first (not 'auto').");
-            return;
-        }
-        // Prefer using REPL terminal if open to avoid port conflicts and return to friendly REPL
-        if (isReplOpen()) {
-            try {
-                const term = await getReplTerminal(context);
-                term.sendText("\x03", false); // Ctrl-C interrupt
-                await new Promise(r => setTimeout(r, 60));
-                term.sendText("\x02", false); // Ctrl-B friendly REPL
-                vscode.window.showInformationMessage("Board: Interrupt sequence (Ctrl-C, Ctrl-B) sent via REPL");
-                return;
-            }
-            catch { }
-        }
-        // Fallback: write directly to serial device
-        const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-        const isMac = process.platform === 'darwin';
-        const sttyCmd = isMac ? `stty -f ${device} 115200` : `stty -F ${device} 115200`;
-        const cmd = `${sttyCmd} && printf '\\x03\\x02' > ${device}`;
-        await new Promise((resolve) => {
-            (0, node_child_process_1.exec)(cmd, (error, stdout, stderr) => {
-                if (error) {
-                    vscode.window.showErrorMessage(`Board: Interrupt sequence failed: ${stderr || error.message}`);
-                }
-                else {
-                    vscode.window.showInformationMessage(`Board: Interrupt sequence (Ctrl-C, Ctrl-B) sent to ${device}`);
-                }
-                resolve();
-            });
-        });
-        // No auto-refresh here
-    }), vscode.commands.registerCommand("mpyWorkbench.stop", async () => {
-        const cfg = vscode.workspace.getConfiguration();
-        const connect = cfg.get("mpyWorkbench.connect", "auto");
-        if (!connect || connect === "auto") {
-            vscode.window.showWarningMessage("Select a specific serial port first (not 'auto').");
-            return;
-        }
-        const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-        // If REPL terminal is open, prefer sending through it to avoid port conflicts
-        if (isReplOpen()) {
-            try {
-                const term = await getReplTerminal(context);
-                term.sendText("\x03", false); // Ctrl-C
-                await new Promise(r => setTimeout(r, 60));
-                term.sendText("\x01", false); // Ctrl-A (raw repl)
-                await new Promise(r => setTimeout(r, 60));
-                term.sendText("\x04", false); // Ctrl-D (soft reboot)
-                vscode.window.showInformationMessage("Board: Stop sequence sent via REPL");
-                return;
-            }
-            catch (e) {
-                // fall back to writing to device below
-            }
-        }
-        const isMac2 = process.platform === 'darwin';
-        const sttyCmd2 = isMac2 ? `stty -f ${device} 115200` : `stty -F ${device} 115200`;
-        const cmd2 = `${sttyCmd2} && printf '\\x03\\x01\\x04' > ${device}`;
-        await new Promise((resolve) => {
-            (0, node_child_process_1.exec)(cmd2, (error, stdout, stderr) => {
-                if (error) {
-                    vscode.window.showErrorMessage(`Board: Stop sequence failed: ${stderr || error.message}`);
-                }
-                else {
-                    vscode.window.showInformationMessage(`Board: Stop sequence sent to ${device}`);
-                }
-                resolve();
-            });
-        });
-    }), vscode.commands.registerCommand("mpyWorkbench.softReset", async () => {
-        const cfg = vscode.workspace.getConfiguration();
-        const connect = cfg.get("mpyWorkbench.connect", "auto");
-        if (!connect || connect === "auto") {
-            vscode.window.showWarningMessage("Select a specific serial port first (not 'auto').");
-            return;
-        }
-        const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-        // If REPL terminal is open, prefer sending through it to avoid port conflicts
-        if (isReplOpen()) {
-            try {
-                const term = await getReplTerminal(context);
-                term.sendText("\x03", false); // Ctrl-C
-                await new Promise(r => setTimeout(r, 60));
-                term.sendText("\x02", false); // Ctrl-B (friendly REPL)
-                await new Promise(r => setTimeout(r, 80));
-                term.sendText("\x04", false); // Ctrl-D (soft reset)
-                vscode.window.showInformationMessage("Board: Soft reset sent via ESP32 REPL");
-                return;
-            }
-            catch {
-                // fall back to writing to device below
-            }
-        }
-        const isMac = process.platform === 'darwin';
-        const sttyCmd = isMac ? `stty -f ${device} 115200` : `stty -F ${device} 115200`;
-        const cmd = `${sttyCmd} && printf '\\x03\\x02\\x04' > ${device}`;
-        await new Promise((resolve) => {
-            (0, node_child_process_1.exec)(cmd, (error, stdout, stderr) => {
-                if (error) {
-                    vscode.window.showErrorMessage(`Board: Soft reset failed: ${stderr || error.message}`);
-                }
-                else {
-                    vscode.window.showInformationMessage(`Board: Soft reset (Ctrl-D) sent to ${device}`);
-                }
-                resolve();
-            });
-        });
-    }), vscode.commands.registerCommand("mpyWorkbench.newFileBoardAndLocal", async () => {
+    }), vscode.commands.registerCommand("mpyWorkbench.serialSendCtrlC", mpremoteCommands_1.serialSendCtrlC), vscode.commands.registerCommand("mpyWorkbench.stop", mpremoteCommands_1.stop), vscode.commands.registerCommand("mpyWorkbench.softReset", mpremoteCommands_1.softReset), vscode.commands.registerCommand("mpyWorkbench.newFileBoardAndLocal", async () => {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws) {
             vscode.window.showErrorMessage("No workspace folder open");
@@ -588,14 +424,14 @@ function activate(context) {
         try {
             const ws = getWorkspaceFolder();
             const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
-            const rel = toLocalRelative(node.path, rootPath);
+            const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
             const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
             await fs.access(abs);
             const doc = await vscode.workspace.openTextDocument(abs);
             await vscode.window.showTextDocument(doc, { preview: true });
         }
         catch (error) {
-            vscode.window.showErrorMessage(`File not found in local workspace: ${toLocalRelative(node.path, vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/"))}`);
+            vscode.window.showErrorMessage(`File not found in local workspace: ${(0, mpremoteCommands_1.toLocalRelative)(node.path, vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/"))}`);
         }
     }), vscode.commands.registerCommand("mpyWorkbench.syncFileLocalToBoard", async (node) => {
         if (node.kind !== "file")
@@ -606,7 +442,7 @@ function activate(context) {
             return;
         }
         const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
-        const rel = toLocalRelative(node.path, rootPath);
+        const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
         const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
         try {
             await fs.access(abs);
@@ -630,7 +466,7 @@ function activate(context) {
             return;
         }
         const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
-        const rel = toLocalRelative(node.path, rootPath);
+        const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
         const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
         await fs.mkdir(path.dirname(abs), { recursive: true });
         await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
@@ -651,8 +487,8 @@ function activate(context) {
     }), vscode.commands.registerCommand("mpyWorkbench.syncBaseline", async () => {
         try {
             // Close the REPL terminal if open to avoid port conflicts
-            if (isReplOpen()) {
-                await disconnectReplTerminal();
+            if ((0, mpremoteCommands_1.isReplOpen)()) {
+                await (0, mpremoteCommands_1.disconnectReplTerminal)();
                 await new Promise(r => setTimeout(r, 400));
             }
             const ws = vscode.workspace.workspaceFolders?.[0];
@@ -677,14 +513,13 @@ function activate(context) {
             const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
             const matcher2 = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
             const man = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher2);
-            // Upload all files with progress
+            // Upload all files with progress using single mpremote fs cp command
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: "Uploading all files to board...",
                 cancellable: false
             }, async (progress, token) => {
                 const files = Object.keys(man.files);
-                let uploaded = 0;
                 const total = files.length;
                 if (total === 0) {
                     progress.report({ increment: 100, message: "No files to upload" });
@@ -692,27 +527,193 @@ function activate(context) {
                 }
                 progress.report({ increment: 0, message: `Found ${total} files to upload` });
                 await withAutoSuspend(async () => {
+                    // First, create all necessary directories on the device in hierarchical order
+                    progress.report({ increment: 5, message: "Creating directories on device..." });
+                    // Collect all unique directory paths that need to be created
+                    const allDirectories = new Set();
                     for (const relativePath of files) {
-                        const localPath = path.join(ws.uri.fsPath, relativePath);
                         const devicePath = path.posix.join(rootPath, relativePath);
-                        progress.report({
-                            increment: (100 / total),
-                            message: `Uploading ${relativePath} (${++uploaded}/${total})`
-                        });
-                        // Ensure directory exists on device
                         const deviceDir = path.posix.dirname(devicePath);
                         if (deviceDir !== '.' && deviceDir !== rootPath) {
-                            try {
-                                await mp.mkdir(deviceDir);
-                                tree.addNode(deviceDir, true); // Add folder to tree
-                            }
-                            catch {
-                                // Directory might already exist, ignore error
+                            // Add all parent directories to the set
+                            let currentDir = deviceDir;
+                            while (currentDir !== rootPath && currentDir !== '/') {
+                                allDirectories.add(currentDir);
+                                currentDir = path.posix.dirname(currentDir);
                             }
                         }
-                        await mp.uploadReplacing(localPath, devicePath);
-                        tree.addNode(devicePath, false); // Add file to tree
                     }
+                    // Sort directories by depth (shallowest first) to ensure parent directories are created before children
+                    const sortedDirectories = Array.from(allDirectories).sort((a, b) => {
+                        const depthA = a.split('/').filter(p => p).length;
+                        const depthB = b.split('/').filter(p => p).length;
+                        return depthA - depthB;
+                    });
+                    console.log(`[DEBUG] syncBaseline: Need to create ${sortedDirectories.length} directories:`, sortedDirectories);
+                    // Create directories in hierarchical order with retry logic
+                    let createdCount = 0;
+                    let failedDirectories = [];
+                    console.log(`[DEBUG] syncBaseline: Starting directory creation for ${sortedDirectories.length} directories...`);
+                    for (const deviceDir of sortedDirectories) {
+                        let created = false;
+                        let attempts = 0;
+                        const maxAttempts = 3;
+                        while (!created && attempts < maxAttempts) {
+                            attempts++;
+                            try {
+                                console.log(`[DEBUG] syncBaseline: Creating directory ${deviceDir} (attempt ${attempts}/${maxAttempts})`);
+                                await mp.mkdir(deviceDir);
+                                tree.addNode(deviceDir, true); // Add folder to tree
+                                created = true;
+                                createdCount++;
+                                console.log(`[DEBUG] syncBaseline: ✓ Created directory ${deviceDir} (${createdCount}/${sortedDirectories.length})`);
+                            }
+                            catch (error) {
+                                console.log(`[DEBUG] syncBaseline: ✗ Directory ${deviceDir} creation failed (attempt ${attempts}):`, error.message);
+                                if (attempts >= maxAttempts) {
+                                    failedDirectories.push(deviceDir);
+                                    console.error(`[DEBUG] syncBaseline: ✗✗ Giving up on directory ${deviceDir} after ${maxAttempts} attempts`);
+                                }
+                                else {
+                                    // Wait a bit before retrying
+                                    await new Promise(resolve => setTimeout(resolve, 100));
+                                }
+                            }
+                        }
+                    }
+                    console.log(`[DEBUG] syncBaseline: Directory creation completed. Created ${createdCount} out of ${sortedDirectories.length} directories.`);
+                    if (failedDirectories.length > 0) {
+                        console.error(`[DEBUG] syncBaseline: Failed to create ${failedDirectories.length} directories:`, failedDirectories);
+                    }
+                    // Verify that ALL directories exist before proceeding with bulk upload
+                    console.log(`[DEBUG] syncBaseline: Verifying ALL directories exist before bulk upload...`);
+                    let allDirectoriesExist = true;
+                    const verificationFailures = [];
+                    for (const deviceDir of sortedDirectories) {
+                        try {
+                            const exists = await mp.fileExists(deviceDir);
+                            if (!exists) {
+                                console.error(`[DEBUG] syncBaseline: ✗ Directory ${deviceDir} does not exist!`);
+                                verificationFailures.push(deviceDir);
+                                allDirectoriesExist = false;
+                            }
+                            else {
+                                console.log(`[DEBUG] syncBaseline: ✓ Directory ${deviceDir} verified`);
+                            }
+                        }
+                        catch (error) {
+                            console.error(`[DEBUG] syncBaseline: ✗ Error checking directory ${deviceDir}:`, error.message);
+                            verificationFailures.push(deviceDir);
+                            allDirectoriesExist = false;
+                        }
+                    }
+                    if (!allDirectoriesExist) {
+                        console.error(`[DEBUG] syncBaseline: Cannot proceed with bulk upload - ${verificationFailures.length} directories missing:`, verificationFailures);
+                        // Try to create the missing directories one more time
+                        console.log(`[DEBUG] syncBaseline: Attempting to create missing directories...`);
+                        for (const missingDir of verificationFailures) {
+                            try {
+                                console.log(`[DEBUG] syncBaseline: Creating missing directory: ${missingDir}`);
+                                await mp.mkdir(missingDir);
+                                tree.addNode(missingDir, true);
+                                console.log(`[DEBUG] syncBaseline: ✓ Successfully created missing directory: ${missingDir}`);
+                            }
+                            catch (createError) {
+                                console.error(`[DEBUG] syncBaseline: ✗ Failed to create missing directory ${missingDir}:`, createError.message);
+                            }
+                        }
+                        // Verify again after the retry
+                        console.log(`[DEBUG] syncBaseline: Re-verifying directories after retry...`);
+                        let stillMissing = [];
+                        for (const missingDir of verificationFailures) {
+                            try {
+                                const exists = await mp.fileExists(missingDir);
+                                if (!exists) {
+                                    stillMissing.push(missingDir);
+                                }
+                            }
+                            catch (error) {
+                                console.error(`[DEBUG] syncBaseline: Error checking ${missingDir} after retry:`, error.message);
+                                stillMissing.push(missingDir);
+                            }
+                        }
+                        if (stillMissing.length > 0) {
+                            console.error(`[DEBUG] syncBaseline: Still missing ${stillMissing.length} directories after retry:`, stillMissing);
+                            throw new Error(`Missing directories after retry: ${stillMissing.join(', ')}`);
+                        }
+                        console.log(`[DEBUG] syncBaseline: ✓ All directories now exist after retry`);
+                    }
+                    console.log(`[DEBUG] syncBaseline: ✓ All directories verified - proceeding with bulk upload`);
+                    progress.report({ increment: 10, message: "Starting bulk upload..." });
+                    // Use individual cp commands instead of bulk upload
+                    console.log(`[DEBUG] syncBaseline: Using individual cp commands for upload`);
+                    // Verify all local files exist before building command
+                    const validFiles = [];
+                    const missingFiles = [];
+                    for (const relativePath of files) {
+                        const localPath = path.join(ws.uri.fsPath, relativePath);
+                        try {
+                            await fs.access(localPath);
+                            validFiles.push(relativePath);
+                            console.log(`[DEBUG] syncBaseline: ✓ Local file exists: ${localPath}`);
+                        }
+                        catch (error) {
+                            console.error(`[DEBUG] syncBaseline: ✗ Local file missing: ${localPath}`);
+                            missingFiles.push(relativePath);
+                        }
+                    }
+                    console.log(`[DEBUG] syncBaseline: ${validFiles.length}/${files.length} local files are accessible`);
+                    // Warn user about missing files
+                    if (missingFiles.length > 0) {
+                        console.warn(`[DEBUG] syncBaseline: Skipping ${missingFiles.length} missing files:`, missingFiles.slice(0, 5));
+                        if (missingFiles.length > 5) {
+                            console.warn(`[DEBUG] syncBaseline: ... and ${missingFiles.length - 5} more`);
+                        }
+                        vscode.window.showWarningMessage(`Found ${missingFiles.length} files in manifest that don't exist locally. These will be skipped. Consider rebuilding the manifest.`);
+                    }
+                    // Update total for progress reporting
+                    const actualTotal = validFiles.length;
+                    console.log(`[DEBUG] syncBaseline: Starting individual uploads for ${actualTotal} files...`);
+                    let uploaded = 0;
+                    let failed = 0;
+                    for (const relativePath of validFiles) {
+                        const localPath = path.join(ws.uri.fsPath, relativePath);
+                        const devicePath = path.posix.join(rootPath, relativePath);
+                        // Double-check file exists before attempting upload (in case it was deleted during the process)
+                        try {
+                            await fs.access(localPath);
+                        }
+                        catch (accessError) {
+                            console.error(`[DEBUG] syncBaseline: ✗ File no longer exists during individual upload: ${localPath}`);
+                            failed++;
+                            continue;
+                        }
+                        try {
+                            console.log(`[DEBUG] syncBaseline: Individual upload ${uploaded + 1}/${actualTotal}: ${localPath} -> ${devicePath}`);
+                            progress.report({
+                                increment: (80 / actualTotal),
+                                message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
+                            });
+                            // Use individual cp command instead of bulk
+                            const cpArgs = ["connect", "auto", "cp", localPath, `:${devicePath}`];
+                            console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
+                            await (0, mpremote_1.runMpremote)(cpArgs, { retryOnFailure: true });
+                            tree.addNode(devicePath, false); // Add file to tree
+                            uploaded++;
+                            console.log(`[DEBUG] syncBaseline: ✓ Individual upload ${uploaded}/${actualTotal} successful: ${relativePath}`);
+                        }
+                        catch (individualError) {
+                            failed++;
+                            console.error(`[DEBUG] syncBaseline: ✗ Individual upload failed for ${relativePath}:`, individualError.message);
+                            // Continue with next file instead of failing completely
+                            // This allows partial success even if some files fail
+                        }
+                    }
+                    console.log(`[DEBUG] syncBaseline: Individual uploads completed. ${uploaded} successful, ${failed} failed.`);
+                    if (failed > 0) {
+                        console.warn(`[DEBUG] syncBaseline: ${failed} files failed to upload individually`);
+                    }
+                    progress.report({ increment: 100, message: "All files uploaded successfully" });
                 });
             });
             // Save manifest locally and on device
@@ -722,7 +723,15 @@ function activate(context) {
             await fs.mkdir(path.dirname(tmp), { recursive: true });
             await fs.writeFile(tmp, JSON.stringify(man));
             const deviceManifest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/.mpy-workbench/esp32sync.json";
-            await withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
+            try {
+                await withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
+                console.log(`[DEBUG] syncBaseline: ✓ Manifest uploaded to device: ${deviceManifest}`);
+            }
+            catch (manifestError) {
+                console.error(`[DEBUG] syncBaseline: ✗ Failed to upload manifest to device:`, manifestError.message);
+                // Don't fail the entire sync if manifest upload fails
+                vscode.window.showWarningMessage(`Manifest upload failed, but file sync completed: ${manifestError.message}`);
+            }
             vscode.window.showInformationMessage("Board: Sync all files (Local → Board) completed");
             // Clear any diff/local-only markers after successful sync-all
             decorations.clear();
@@ -733,8 +742,8 @@ function activate(context) {
         }
     }), vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromBoard", async () => {
         // Close the REPL terminal if open to avoid port conflicts
-        if (isReplOpen()) {
-            await disconnectReplTerminal();
+        if ((0, mpremoteCommands_1.isReplOpen)()) {
+            await (0, mpremoteCommands_1.disconnectReplTerminal)();
             await new Promise(r => setTimeout(r, 400));
         }
         const ws = vscode.workspace.workspaceFolders?.[0];
@@ -748,7 +757,7 @@ function activate(context) {
         const toDownload = deviceStats
             .filter(stat => !stat.isDir)
             .filter(stat => {
-            const rel = toLocalRelative(stat.path, rootPath);
+            const rel = (0, mpremoteCommands_1.toLocalRelative)(stat.path, rootPath);
             return !matcher(rel, false);
         });
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync all files (Board → Local)", cancellable: false }, async (progress) => {
@@ -756,7 +765,7 @@ function activate(context) {
             const total = toDownload.length;
             await withAutoSuspend(async () => {
                 for (const stat of toDownload) {
-                    const rel = toLocalRelative(stat.path, rootPath);
+                    const rel = (0, mpremoteCommands_1.toLocalRelative)(stat.path, rootPath);
                     const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
                     progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
                     await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -769,13 +778,11 @@ function activate(context) {
         // Clear any diff/local-only markers after successful sync-all
         decorations.clear();
         tree.refreshTree();
-    }), vscode.commands.registerCommand("mpyWorkbench.openSerial", async () => {
-        await openReplTerminal(context);
-    }), vscode.commands.registerCommand("mpyWorkbench.openRepl", async () => {
-        const term = await getReplTerminal(context);
+    }), vscode.commands.registerCommand("mpyWorkbench.openSerial", mpremoteCommands_1.openReplTerminal), vscode.commands.registerCommand("mpyWorkbench.openRepl", async () => {
+        const term = await (0, mpremoteCommands_1.getReplTerminal)(context);
         term.show(true);
     }), vscode.commands.registerCommand("mpyWorkbench.stopSerial", async () => {
-        await closeReplTerminal();
+        await (0, mpremoteCommands_1.closeReplTerminal)();
         vscode.window.showInformationMessage("Board: ESP32 REPL closed");
     }), vscode.commands.registerCommand("mpyWorkbench.autoSuspendLs", async (pathArg) => {
         listingInProgress = true;
@@ -791,20 +798,6 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('mpyWorkbench.connect'))
             updatePortContext();
-        // Clear Python interpreter cache when Python configuration changes
-        if (e.affectsConfiguration('python.defaultInterpreterPath') ||
-            e.affectsConfiguration('python.pythonPath') ||
-            e.affectsConfiguration('mpyWorkbench.pythonPath')) {
-            (0, pythonInterpreter_1.clearPythonCache)();
-        }
-    }), 
-    // Listen for Python extension activation/deactivation to clear cache
-    vscode.extensions.onDidChange(() => {
-        const pythonExtension = vscode.extensions.getExtension('ms-python.python');
-        if (pythonExtension && pythonExtension.isActive) {
-            // Clear cache when Python extension becomes active
-            (0, pythonInterpreter_1.clearPythonCache)();
-        }
     }), vscode.commands.registerCommand("mpyWorkbench.uploadActiveFile", async () => {
         const ed = vscode.window.activeTextEditor;
         if (!ed) {
@@ -831,56 +824,32 @@ function activate(context) {
         tree.addNode(dest, false);
         vscode.window.showInformationMessage(`Uploaded to ${dest}`);
         tree.refreshTree();
-    }), vscode.commands.registerCommand("mpyWorkbench.runActiveFile", async () => {
-        const ed = vscode.window.activeTextEditor;
-        if (!ed) {
-            vscode.window.showErrorMessage("No active editor");
-            return;
-        }
-        await ed.document.save();
-        // If the REPL terminal is open, close it before executing
-        if (isReplOpen()) {
-            await closeReplTerminal();
-            // Wait for the system to release the port
-            await new Promise(r => setTimeout(r, 400));
-        }
-        // Intenta abrir la terminal REPL
-        try {
-            await openReplTerminal(context);
-        }
-        catch (err) {
-            vscode.window.showErrorMessage("Could not open REPL terminal. The port may be busy or disconnected. Close any processes using the port and try again.");
-            return;
-        }
-        const term = await getReplTerminal(context);
-        // Longer pause to avoid Ctrl-* being treated as host signals before miniterm takes control
-        await new Promise(r => setTimeout(r, 600));
-        // Enter RAW REPL (no input echo). Avoid Ctrl-C here as it may generate KeyboardInterrupt in miniterm if not ready yet
-        term.sendText("\x01", false); // Ctrl-A (raw REPL)
-        await new Promise(r => setTimeout(r, 150));
-        // Send the complete file content; in RAW REPL the text is not shown
-        const text = ed.document.getText().replace(/\r\n/g, "\n");
-        term.sendText(text, true);
-        // Finalize and execute
-        term.sendText("\x04", false); // Ctrl-D (execute in raw)
-        // Return to friendly REPL after a small interval
-        await new Promise(r => setTimeout(r, 200));
-        term.sendText("\x02", false); // Ctrl-B (friendly REPL)
-    }), vscode.commands.registerCommand("mpyWorkbench.checkDiffs", async () => {
-        // ...existing code...
+    }), vscode.commands.registerCommand("mpyWorkbench.runActiveFile", mpremoteCommands_1.runActiveFile), vscode.commands.registerCommand("mpyWorkbench.checkDiffs", async () => {
+        console.log("[DEBUG] checkDiffs: Starting diff check with tree cache");
         const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
         // Helper to convert local relative path to absolute path on board
         const toDevicePath = (localRel) => {
-            const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
-            if (normRoot === "/")
-                return "/" + localRel;
-            return localRel === "" ? normRoot : normRoot + "/" + localRel;
+            console.log(`[DEBUG] checkDiffs: Converting local path ${localRel} to device path with rootPath ${rootPath}`);
+            // Normalize paths
+            const normalizedLocalPath = localRel.replace(/\/+/g, '/').replace(/\/$/, '');
+            const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
+            console.log(`[DEBUG] checkDiffs: Normalized paths - local: ${normalizedLocalPath}, root: ${normalizedRootPath}`);
+            // If root is just "/", add leading slash to local path
+            if (normalizedRootPath === "") {
+                const result = "/" + normalizedLocalPath;
+                console.log(`[DEBUG] checkDiffs: Root is /, result: ${result}`);
+                return result;
+            }
+            // If local path is empty, return root path
+            if (normalizedLocalPath === "") {
+                console.log(`[DEBUG] checkDiffs: Local path is empty, result: ${normalizedRootPath}`);
+                return normalizedRootPath;
+            }
+            // Combine root and local path
+            const result = normalizedRootPath + "/" + normalizedLocalPath;
+            console.log(`[DEBUG] checkDiffs: Combined paths, result: ${result}`);
+            return result;
         };
-        // Close the REPL terminal if open to avoid port conflicts
-        if (isReplOpen()) {
-            await disconnectReplTerminal();
-            await new Promise(r => setTimeout(r, 400));
-        }
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: "Checking file differences...",
@@ -906,65 +875,132 @@ function activate(context) {
                 await (0, sync_1.saveManifest)(manifestPath, initialManifest);
                 vscode.window.showInformationMessage("Local folder initialized for synchronization.");
             }
-            const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
-            progress.report({ message: "Reading board files..." });
-            const relFromDevice = (devicePath) => {
-                const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
-                if (normRoot === "/")
-                    return devicePath.replace(/^\//, "");
-                if (devicePath.startsWith(normRoot + "/"))
-                    return devicePath.slice(normRoot.length + 1);
-                if (devicePath === normRoot)
-                    return "";
-                return devicePath.replace(/^\//, "");
-            };
+            progress.report({ message: "Reading local files..." });
             // Apply ignore/filters locally before comparing
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
             const localManifest = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher);
-            // Only local files that are not ignored
             const localFiles = Object.keys(localManifest.files);
-            // Obtén listado del board
-            const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
+            console.log(`[DEBUG] checkDiffs: Found ${localFiles.length} local files`);
+            progress.report({ message: "Reading board files from cache..." });
+            // Clear cache first to ensure fresh data
+            console.log(`[DEBUG] checkDiffs: Clearing file tree cache before reading...`);
+            await mp.refreshFileTreeCache();
+            // Get device files from cache (much faster!)
+            const deviceStats = await mp.listTreeStats(rootPath); // This now uses cache
             const deviceFiles = deviceStats.filter(e => !e.isDir);
-            // Apply ignore rules to device files too, so ignored files/dirs don't produce false diffs
+            console.log(`[DEBUG] checkDiffs: Found ${deviceFiles.length} device files from cache`);
+            // Helper to convert device path to local relative
+            const relFromDevice = (devicePath) => {
+                console.log(`[DEBUG] checkDiffs: Converting device path ${devicePath} with rootPath ${rootPath}`);
+                // Normalize paths to ensure consistent comparison
+                const normalizedDevicePath = devicePath.replace(/\/+/g, '/').replace(/\/$/, '');
+                const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
+                console.log(`[DEBUG] checkDiffs: Normalized paths - device: ${normalizedDevicePath}, root: ${normalizedRootPath}`);
+                // If root is just "/", remove leading slash from device path
+                if (normalizedRootPath === "") {
+                    const result = normalizedDevicePath.replace(/^\//, "");
+                    console.log(`[DEBUG] checkDiffs: Root is /, result: ${result}`);
+                    return result;
+                }
+                // If device path starts with root path, remove the root prefix
+                if (normalizedDevicePath.startsWith(normalizedRootPath + "/")) {
+                    const result = normalizedDevicePath.slice(normalizedRootPath.length + 1);
+                    console.log(`[DEBUG] checkDiffs: Path starts with root, result: ${result}`);
+                    return result;
+                }
+                // If device path equals root path, return empty string
+                if (normalizedDevicePath === normalizedRootPath) {
+                    console.log(`[DEBUG] checkDiffs: Path equals root, result: ""`);
+                    return "";
+                }
+                // Fallback: remove leading slash if present
+                const result = normalizedDevicePath.replace(/^\//, "");
+                console.log(`[DEBUG] checkDiffs: Fallback, result: ${result}`);
+                return result;
+            };
+            // Apply ignore rules to device files
             const deviceFilesFiltered = deviceFiles.filter(f => {
                 const rel = relFromDevice(f.path);
-                return !matcher(rel, false);
+                const shouldIgnore = matcher(rel, false);
+                console.log(`[DEBUG] checkDiffs: Device file ${f.path} -> local relative: ${rel}, ignored: ${shouldIgnore}`);
+                return !shouldIgnore;
             });
+            console.log(`[DEBUG] checkDiffs: After filtering: ${deviceFilesFiltered.length} device files`);
             const deviceFileMap = new Map(deviceFilesFiltered.map(f => [relFromDevice(f.path), f]));
             const diffSet = new Set();
+            const localOnlySet = new Set();
+            console.log(`[DEBUG] checkDiffs: Device file map keys:`, Array.from(deviceFileMap.keys()));
+            console.log(`[DEBUG] checkDiffs: Local files:`, localFiles);
+            // Show detailed comparison summary
+            console.log(`[DEBUG] checkDiffs: === COMPARISON SUMMARY ===`);
+            console.log(`[DEBUG] checkDiffs: Total local files: ${localFiles.length}`);
+            console.log(`[DEBUG] checkDiffs: Total device files: ${deviceFilesFiltered.length}`);
+            console.log(`[DEBUG] checkDiffs: Device file paths:`, deviceFilesFiltered.map(f => f.path));
+            console.log(`[DEBUG] checkDiffs: Device file keys (converted):`, Array.from(deviceFileMap.keys()));
+            console.log(`[DEBUG] checkDiffs: ========================`);
+            // Debug: Show first few device files with their converted paths
+            console.log(`[DEBUG] checkDiffs: First 10 device files with conversions:`);
+            deviceFilesFiltered.slice(0, 10).forEach(f => {
+                const rel = relFromDevice(f.path);
+                console.log(`[DEBUG] checkDiffs: Device: ${f.path} -> Local: ${rel}`);
+            });
             progress.report({ message: "Comparing files..." });
-            // Compara solo archivos locales no ignorados
+            // Compare local files with device files
+            console.log(`[DEBUG] checkDiffs: Starting comparison of ${localFiles.length} local files with ${deviceFilesFiltered.length} device files`);
             for (const localRel of localFiles) {
                 const deviceFile = deviceFileMap.get(localRel);
                 const abs = path.join(ws.uri.fsPath, ...localRel.split('/'));
+                console.log(`[DEBUG] checkDiffs: Comparing local file: ${localRel}`);
+                console.log(`[DEBUG] checkDiffs: Looking for device file with key: ${localRel}`);
+                console.log(`[DEBUG] checkDiffs: Device file found: ${!!deviceFile}`);
+                if (deviceFile) {
+                    console.log(`[DEBUG] checkDiffs: ✓ MATCH FOUND - Local: ${localRel} -> Device: ${deviceFile.path}`);
+                }
+                else {
+                    console.log(`[DEBUG] checkDiffs: ✗ NO MATCH - Local: ${localRel} not found on device`);
+                    console.log(`[DEBUG] checkDiffs: Available device keys (first 10):`, Array.from(deviceFileMap.keys()).slice(0, 10));
+                    console.log(`[DEBUG] checkDiffs: Similar device keys:`, Array.from(deviceFileMap.keys()).filter(k => k.includes(localRel.split('/').pop() || '') || localRel.includes(k.split('/').pop() || '')));
+                }
                 if (deviceFile) {
                     try {
                         const st = await fs.stat(abs);
                         // Consider files the same if sizes match (ignore mtime skew on device)
                         const same = st.size === deviceFile.size;
-                        if (!same)
+                        console.log(`[DEBUG] checkDiffs: Size comparison for ${localRel}: local=${st.size}, device=${deviceFile.size}, same=${same}`);
+                        if (!same) {
                             diffSet.add(deviceFile.path);
+                            console.log(`[DEBUG] checkDiffs: Size mismatch for ${localRel}: local=${st.size}, device=${deviceFile.size}`);
+                        }
                     }
-                    catch {
+                    catch (error) {
+                        // Local file not accessible
                         diffSet.add(deviceFile.path);
+                        console.log(`[DEBUG] checkDiffs: Local file not accessible: ${localRel}, error: ${error}`);
                     }
                 }
+                else {
+                    console.log(`[DEBUG] checkDiffs: Local file not on device: ${localRel} - THIS IS THE PROBLEM!`);
+                    // This is where the "exists locally but not on board" error comes from
+                    const devicePath = toDevicePath(localRel);
+                    localOnlySet.add(devicePath);
+                    console.log(`[DEBUG] checkDiffs: Added to localOnlySet: ${devicePath}`);
+                }
             }
-            // Files on board that don't exist locally (not ignored)
+            // Files on board that don't exist locally
             for (const [rel, deviceFile] of deviceFileMap.entries()) {
                 if (!localFiles.includes(rel)) {
                     diffSet.add(deviceFile.path);
+                    console.log(`[DEBUG] checkDiffs: Device file not local: ${rel} -> ${deviceFile.path}`);
                 }
             }
-            progress.report({ message: "Checking local files..." });
+            progress.report({ message: "Checking local-only files..." });
             // Files that exist locally but not on board
-            const localOnlySet = new Set();
             for (const localRel of localFiles) {
                 const deviceFile = deviceFileMap.get(localRel);
                 if (!deviceFile) {
-                    // Only add if not ignored
-                    localOnlySet.add(toDevicePath(localRel));
+                    const devicePath = toDevicePath(localRel);
+                    localOnlySet.add(devicePath);
+                    console.log(`[DEBUG] checkDiffs: Local-only file: ${localRel} -> ${devicePath}`);
                 }
             }
             progress.report({ message: "Processing differences..." });
@@ -984,7 +1020,7 @@ function activate(context) {
             }
             for (const d of parents)
                 diffSet.add(d);
-            // Mark parent dirs for local-only files too (for decorations only)
+            // Mark parent dirs for local-only files too
             for (const p of localOnlySet) {
                 let cur = p;
                 while (cur.includes('/')) {
@@ -1076,7 +1112,7 @@ function activate(context) {
             const total = allFilesToSync.length;
             await withAutoSuspend(async () => {
                 for (const devicePath of allFilesToSync) {
-                    const rel = toLocalRelative(devicePath, rootPath);
+                    const rel = (0, mpremoteCommands_1.toLocalRelative)(devicePath, rootPath);
                     const abs = path.join(ws.uri.fsPath, ...rel.split('/'));
                     try {
                         await fs.access(abs);
@@ -1151,13 +1187,13 @@ function activate(context) {
             let done = 0;
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws2.uri.fsPath);
             const filtered = diffs2.filter(devicePath => {
-                const rel = toLocalRelative(devicePath, rootPath2);
+                const rel = (0, mpremoteCommands_1.toLocalRelative)(devicePath, rootPath2);
                 return !matcher(rel, false);
             });
             const total = filtered.length;
             await withAutoSuspend(async () => {
                 for (const devicePath of filtered) {
-                    const rel = toLocalRelative(devicePath, rootPath2);
+                    const rel = (0, mpremoteCommands_1.toLocalRelative)(devicePath, rootPath2);
                     const abs = path.join(ws2.uri.fsPath, ...rel.split('/'));
                     progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
                     await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -1175,7 +1211,7 @@ function activate(context) {
         const ws = vscode.workspace.workspaceFolders?.[0];
         const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
         if (ws) {
-            const rel = toLocalRelative(node.path, rootPath);
+            const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
             const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
             await fs.mkdir(path.dirname(abs), { recursive: true });
             // If not present locally, fetch from device to local path
@@ -1259,7 +1295,7 @@ function activate(context) {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (ws) {
             const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
-            const rel = toLocalRelative(node.path, rootPath);
+            const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
             const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
             try {
                 await fs.rm(abs, { recursive: true, force: true });
@@ -1468,8 +1504,8 @@ function activate(context) {
             vscode.window.showWarningMessage(`Board auto-upload failed for ${rel}: ${String(e?.message ?? e)}`);
         }
     }), vscode.window.onDidCloseTerminal((terminal) => {
-        if (terminal === replTerminal || terminal.name === "ESP32 REPL") {
-            replTerminal = undefined;
+        if (terminal.name === "ESP32 REPL") {
+            // replTerminal is now managed in mpremoteCommands.ts
         }
     }));
     // Command to toggle workspace-level autosync setting
@@ -1492,146 +1528,6 @@ function activate(context) {
     }));
 }
 function deactivate() { }
-let replTerminal;
-async function getReplTerminal(context) {
-    if (replTerminal) {
-        const alive = vscode.window.terminals.some(t => t === replTerminal);
-        if (alive)
-            return replTerminal;
-        replTerminal = undefined;
-    }
-    const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
-    const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-    const isWindows = process.platform === 'win32';
-    if (isWindows) {
-        // Windows: keep trying to reconnect using PowerShell loop; filter error stack traces. Ctrl+C to stop.
-        // Print reconnect notice only once per session.
-        const pythonCmd = await (0, pythonInterpreter_1.getPythonCommandForTerminal)().catch(() => 'python');
-        const cmd = `powershell -NoProfile -Command "${pythonCmd} -c 'import serial' 2>$null; if ($LASTEXITCODE -ne 0) { echo 'ERROR: pyserial not installed. Install with: pip install pyserial' }; $once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | Where-Object { $_ -notmatch '^--- exit ---|Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port|During handling of the above exception|os.read\(' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }"`;
-        replTerminal = vscode.window.createTerminal({
-            name: "ESP32 REPL",
-            shellPath: "cmd.exe",
-            shellArgs: ["/d", "/c", cmd]
-        });
-    }
-    else {
-        // macOS/Linux: try multiple Python commands; loop to auto-reconnect; filter traceback blocks; Ctrl+C to stop.
-        const userShell = process.env.SHELL || '/bin/bash';
-        const awkFilter = `awk 'BEGIN{skip=0}
-$0 ~ /^--- Miniterm on /{skip=0; print; next}
-$0 ~ /^--- Quit:/{skip=0; print; next}
-$0 ~ /^Exception in thread [rt]x:/{skip=1;next}
-index($0, "Traceback (most recent call last):")==1 {skip=1;next}
-index($0, "During handling of the above exception, another exception occurred:")==1 {skip=1;next}
-skip && $0 ~ /^$/{skip=0;next}
-$0 ~ /^--- exit ---$/{next}
-index($0, "could not open port ")==1 {next}
-index($0, "SerialException: read failed:") {next}
-index($0, "OSError: [Errno 6] Device not configured") {next}
-index($0, "os.read(") {next}
-/^[[:space:]]*[\\^]+$/ {next}
-index($0, "serial/tools/miniterm.py") {next}
-index($0, "serial/serialposix.py") {next}
-index($0, "/threading.py") {next}
-skip==0 {print}'`;
-        const pythonCmd = await (0, pythonInterpreter_1.getPythonCommandForTerminal)().catch(() => 'python3');
-        const cmd = `ANNOUNCED=0; TRIED=0; while true; do if ${pythonCmd} -c "import serial" 2>/dev/null; then ${pythonCmd} -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | ${awkFilter}; elif python -c "import serial" 2>/dev/null; then python -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | ${awkFilter}; elif /usr/bin/python3 -c "import serial" 2>/dev/null; then /usr/bin/python3 -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | ${awkFilter}; else echo; echo "ERROR: pyserial not found in any Python installation."; echo "Try installing with one of:"; echo "  pip3 install pyserial"; echo "  python3 -m pip install pyserial"; echo "Available Pythons:"; which python3 python /usr/bin/python3 2>/dev/null || echo "  None found"; fi; if [ $TRIED -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; TRIED=1; fi; sleep 1; done`;
-        replTerminal = vscode.window.createTerminal({
-            name: "ESP32 REPL",
-            shellPath: userShell,
-            shellArgs: ["-lc", cmd]
-        });
-    }
-    return replTerminal;
-}
-function isReplOpen() {
-    if (!replTerminal)
-        return false;
-    return vscode.window.terminals.some(t => t === replTerminal);
-}
-async function closeReplTerminal() {
-    if (replTerminal) {
-        try {
-            replTerminal.dispose();
-        }
-        catch { }
-        replTerminal = undefined;
-        await new Promise(r => setTimeout(r, 300));
-    }
-}
-async function openReplTerminal(context) {
-    // Strict handshake like Thonny: ensure device is interrupted and responsive before opening REPL
-    const cfg = vscode.workspace.getConfiguration();
-    const interrupt = cfg.get("mpyWorkbench.interruptOnConnect", true);
-    const strict = cfg.get("mpyWorkbench.strictConnect", true);
-    let lastError = null;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-            if (strict) {
-                await strictConnectHandshake(interrupt);
-            }
-            else if (interrupt) {
-                try {
-                    await mp.reset();
-                }
-                catch { }
-            }
-            const term = await getReplTerminal(context);
-            term.show(true);
-            // tiny delay to ensure terminal connects before next action
-            await new Promise(r => setTimeout(r, 150));
-            return;
-        }
-        catch (err) {
-            lastError = err;
-            const msg = String(err?.message || err).toLowerCase();
-            if (msg.includes("device not configured") ||
-                msg.includes("serialexception") ||
-                msg.includes("serial port not found") ||
-                msg.includes("read failed")) {
-                // Wait and retry once
-                if (attempt === 1)
-                    await new Promise(r => setTimeout(r, 1200));
-                else
-                    throw err;
-            }
-            else {
-                throw err;
-            }
-        }
-    }
-    if (lastError)
-        throw lastError;
-}
-async function strictConnectHandshake(interrupt) {
-    // Try reset + quick op, retry once if needed
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-            if (interrupt)
-                await mp.reset();
-            // quick check: ls root; if it returns without throwing, we assume we're good
-            await mp.ls("/");
-            return;
-        }
-        catch (e) {
-            if (attempt === 2)
-                break;
-            // small backoff then retry
-            await new Promise(r => setTimeout(r, 200));
-        }
-    }
-}
-function toLocalRelative(devicePath, rootPath) {
-    const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
-    if (normRoot === "/")
-        return devicePath.replace(/^\//, "");
-    if (devicePath.startsWith(normRoot + "/"))
-        return devicePath.slice(normRoot.length + 1);
-    if (devicePath === normRoot)
-        return "";
-    // Fallback: strip leading slash
-    return devicePath.replace(/^\//, "");
-}
 // (no stray command registrations beyond this point)
 /*
 vscode.commands.registerCommand("mpyWorkbench.rename", async (node: Esp32Node) => {
