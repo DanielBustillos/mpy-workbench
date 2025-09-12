@@ -8,6 +8,8 @@
   "engines": {
     "vscode": "^1.84.0"
   },
+  "extensionDependencies": [],
+  "extensionPack": [],
   "categories": [
     "Programming Languages",
     "Debuggers"
@@ -439,6 +441,11 @@
           "type": "number",
           "default": 115200,
           "description": "Serial baud rate for UART bridges (ignored on native USB CDC). Try 921600 or 1500000 if your board/adapter supports it."
+        },
+        "mpyWorkbench.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override Python interpreter path. Leave empty to use VS Code's configured Python interpreter."
         }
       }
     }

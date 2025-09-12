@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import * as vscode from "vscode";
+import { getPythonPath } from "./pythonInterpreter";
 
 class SerialMonitor {
   private timer?: NodeJS.Timeout;
@@ -46,7 +47,8 @@ class SerialMonitor {
     const device = (connect || '').replace(/^serial:\/\//, "").replace(/^serial:\//, "");
     // Spawn a short-lived miniterm to read any pending output, then kill.
     const args = ["-m", "serial.tools.miniterm", device, "115200"];
-    const proc = spawn("python3", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const pythonPath = await getPythonPath();
+    const proc = spawn(pythonPath, args, { stdio: ["ignore", "pipe", "pipe"] });
     let buf = "";
     let err = "";
     if (proc.stdout) proc.stdout.on("data", d => { buf += String(d); });

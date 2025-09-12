@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.monitor = void 0;
 const node_child_process_1 = require("node:child_process");
 const vscode = require("vscode");
+const pythonInterpreter_1 = require("./pythonInterpreter");
 class SerialMonitor {
     constructor() {
         this.busy = false;
@@ -51,7 +52,8 @@ class SerialMonitor {
         const device = (connect || '').replace(/^serial:\/\//, "").replace(/^serial:\//, "");
         // Spawn a short-lived miniterm to read any pending output, then kill.
         const args = ["-m", "serial.tools.miniterm", device, "115200"];
-        const proc = (0, node_child_process_1.spawn)("python3", args, { stdio: ["ignore", "pipe", "pipe"] });
+        const pythonPath = await (0, pythonInterpreter_1.getPythonPath)();
+        const proc = (0, node_child_process_1.spawn)(pythonPath, args, { stdio: ["ignore", "pipe", "pipe"] });
         let buf = "";
         let err = "";
         if (proc.stdout)

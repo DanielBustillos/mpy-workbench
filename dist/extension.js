@@ -29,13 +29,22 @@ async function restartReplInExistingTerminal() {
         if (isWindows) {
             // Use PowerShell loop to auto-reconnect until available. Filter error stack traces.
             // Print the reconnect notice only once per session.
-            const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { python -m serial.tools.miniterm '${device}' 115200 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
-            replTerminal.sendText(cmd, true);
+            (0, pythonInterpreter_1.getPythonCommandForTerminal)().then(pythonCmd => {
+                const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm '${device}' 115200 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
+                if (replTerminal)
+                    replTerminal.sendText(cmd, true);
+            }).catch(() => {
+                // Fallback to python if getPythonCommandForTerminal fails
+                const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { python -m serial.tools.miniterm '${device}' 115200 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
+                if (replTerminal)
+                    replTerminal.sendText(cmd, true);
+            });
         }
         else {
             // Loop forever: rerun miniterm on disconnect, allow Ctrl+C to stop; filter traceback blocks.
             // Print the reconnect notice only once per session.
-            const cmd = `shown=0; while true; do ( python3 -m serial.tools.miniterm ${device} 115200 2>&1 | awk 'BEGIN{skip=0}
+            (0, pythonInterpreter_1.getPythonCommandForTerminal)().then(pythonCmd => {
+                const cmd = `shown=0; while true; do ( ${pythonCmd} -m serial.tools.miniterm ${device} 115200 2>&1 | awk 'BEGIN{skip=0}
 $0 ~ /^--- Miniterm on /{skip=0; print; next}
 $0 ~ /^--- Quit:/{skip=0; print; next}
 $0 ~ /^Exception in thread [rt]x:/{skip=1;next}
@@ -52,7 +61,30 @@ index($0, "serial/tools/miniterm.py") {next}
 index($0, "serial/serialposix.py") {next}
 index($0, "/threading.py") {next}
 skip==0 {print}' ); if [ $shown -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; shown=1; fi; sleep 1; done`;
-            replTerminal.sendText(cmd, true);
+                if (replTerminal)
+                    replTerminal.sendText(cmd, true);
+            }).catch(() => {
+                // Fallback to python3 if getPythonCommandForTerminal fails
+                const cmd = `shown=0; while true; do ( python3 -m serial.tools.miniterm ${device} 115200 2>&1 | awk 'BEGIN{skip=0}
+$0 ~ /^--- Miniterm on /{skip=0; print; next}
+$0 ~ /^--- Quit:/{skip=0; print; next}
+$0 ~ /^Exception in thread [rt]x:/{skip=1;next}
+index($0, "Traceback (most recent call last):")==1 {skip=1;next}
+index($0, "During handling of the above exception, another exception occurred:")==1 {skip=1;next}
+skip && $0 ~ /^$/{skip=0;next}
+$0 ~ /^--- exit ---$/{next}
+index($0, "could not open port ")==1 {next}
+index($0, "SerialException: read failed:") {next}
+index($0, "OSError: [Errno 6] Device not configured") {next}
+index($0, "os.read(") {next}
+/^[[:space:]]*[\\^]+$/ {next}
+index($0, "serial/tools/miniterm.py") {next}
+index($0, "serial/serialposix.py") {next}
+index($0, "/threading.py") {next}
+skip==0 {print}' ); if [ $shown -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; shown=1; fi; sleep 1; done`;
+                if (replTerminal)
+                    replTerminal.sendText(cmd, true);
+            });
         }
         await new Promise(r => setTimeout(r, 200));
     }
@@ -69,16 +101,22 @@ const node_child_process_1 = require("node:child_process");
 const sync_1 = require("./sync");
 const decorations_1 = require("./decorations");
 const pyraw_1 = require("./pyraw");
+const pythonInterpreter_1 = require("./pythonInterpreter");
 // import { monitor } from "./monitor"; // switched to auto-suspend REPL strategy
 function activate(context) {
     // Validar dependencias Python al activar la extensión
     const { execFile } = require('node:child_process');
     const pyScript = path.join(context.extensionPath, 'scripts', 'check_python_deps.py');
-    execFile('python3', [pyScript], (err, stdout, stderr) => {
-        const out = String(stdout || '').trim();
-        if (out === 'ok')
-            return;
-        vscode.window.showWarningMessage('Dependencia faltante: pyserial. Instala pyserial en el entorno Python usado por la extensión para detectar puertos y comunicar con el dispositivo.');
+    // Use the configured Python interpreter for dependency check
+    (0, pythonInterpreter_1.getPythonPath)().then(pythonPath => {
+        execFile(pythonPath, [pyScript], (err, stdout, stderr) => {
+            const out = String(stdout || '').trim();
+            if (out === 'ok')
+                return;
+            vscode.window.showWarningMessage('Dependencia faltante: pyserial. Instala pyserial en el entorno Python usado por la extensión para detectar puertos y comunicar con el dispositivo.');
+        });
+    }).catch(error => {
+        vscode.window.showWarningMessage(`Error checking Python dependencies: ${error.message}`);
     });
     // Helper to get workspace folder or throw error
     function getWorkspaceFolder() {
@@ -749,6 +787,20 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('mpyWorkbench.connect'))
             updatePortContext();
+        // Clear Python interpreter cache when Python configuration changes
+        if (e.affectsConfiguration('python.defaultInterpreterPath') ||
+            e.affectsConfiguration('python.pythonPath') ||
+            e.affectsConfiguration('mpyWorkbench.pythonPath')) {
+            (0, pythonInterpreter_1.clearPythonCache)();
+        }
+    }), 
+    // Listen for Python extension activation/deactivation to clear cache
+    vscode.extensions.onDidChange(() => {
+        const pythonExtension = vscode.extensions.getExtension('ms-python.python');
+        if (pythonExtension && pythonExtension.isActive) {
+            // Clear cache when Python extension becomes active
+            (0, pythonInterpreter_1.clearPythonCache)();
+        }
     }), vscode.commands.registerCommand("mpyWorkbench.uploadActiveFile", async () => {
         const ed = vscode.window.activeTextEditor;
         if (!ed) {
@@ -1450,7 +1502,8 @@ async function getReplTerminal(context) {
     if (isWindows) {
         // Windows: keep trying to reconnect using PowerShell loop; filter error stack traces. Ctrl+C to stop.
         // Print reconnect notice only once per session.
-        const cmd = `powershell -NoProfile -Command "python -c 'import serial' 2>$null; if ($LASTEXITCODE -ne 0) { echo 'ERROR: pyserial not installed. Install with: pip install pyserial' }; $once=$true; while ($true) { python -m serial.tools.miniterm ${device} 115200 2>&1 | Where-Object { $_ -notmatch '^--- exit ---|Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port|During handling of the above exception|os.read\(' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }"`;
+        const pythonCmd = await (0, pythonInterpreter_1.getPythonCommandForTerminal)().catch(() => 'python');
+        const cmd = `powershell -NoProfile -Command "${pythonCmd} -c 'import serial' 2>$null; if ($LASTEXITCODE -ne 0) { echo 'ERROR: pyserial not installed. Install with: pip install pyserial' }; $once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm ${device} 115200 2>&1 | Where-Object { $_ -notmatch '^--- exit ---|Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port|During handling of the above exception|os.read\(' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }"`;
         replTerminal = vscode.window.createTerminal({
             name: "ESP32 REPL",
             shellPath: "cmd.exe",
@@ -1477,7 +1530,8 @@ index($0, "serial/tools/miniterm.py") {next}
 index($0, "serial/serialposix.py") {next}
 index($0, "/threading.py") {next}
 skip==0 {print}'`;
-        const cmd = `ANNOUNCED=0; TRIED=0; while true; do if python3 -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using python3..."; ANNOUNCED=1; fi; python3 -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif python -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using python..."; ANNOUNCED=1; fi; python -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif /usr/bin/python3 -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using /usr/bin/python3..."; ANNOUNCED=1; fi; /usr/bin/python3 -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; else echo; echo "ERROR: pyserial not found in any Python installation."; echo "Try installing with one of:"; echo "  pip3 install pyserial"; echo "  python3 -m pip install pyserial"; echo "Available Pythons:"; which python3 python /usr/bin/python3 2>/dev/null || echo "  None found"; fi; if [ $TRIED -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; TRIED=1; fi; sleep 1; done`;
+        const pythonCmd = await (0, pythonInterpreter_1.getPythonCommandForTerminal)().catch(() => 'python3');
+        const cmd = `ANNOUNCED=0; TRIED=0; while true; do if ${pythonCmd} -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using ${pythonCmd}..."; ANNOUNCED=1; fi; ${pythonCmd} -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif python -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using python..."; ANNOUNCED=1; fi; python -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif /usr/bin/python3 -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using /usr/bin/python3..."; ANNOUNCED=1; fi; /usr/bin/python3 -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; else echo; echo "ERROR: pyserial not found in any Python installation."; echo "Try installing with one of:"; echo "  pip3 install pyserial"; echo "  python3 -m pip install pyserial"; echo "Available Pythons:"; which python3 python /usr/bin/python3 2>/dev/null || echo "  None found"; fi; if [ $TRIED -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; TRIED=1; fi; sleep 1; done`;
         replTerminal = vscode.window.createTerminal({
             name: "ESP32 REPL",
             shellPath: userShell,
