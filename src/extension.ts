@@ -1,8 +1,8 @@
-// Desconecta la terminal REPL del ESP32 pero la deja abierta
+// Disconnect the ESP32 REPL terminal but leave it open
 async function disconnectReplTerminal() {
   if (replTerminal) {
     try {
-      // Secuencia para salir limpiamente de miniterm: Ctrl-] luego 'q' + Enter
+      // Sequence to exit miniterm cleanly: Ctrl-] then 'q' + Enter
       replTerminal.sendText("\x1d", false); // Ctrl-]
       await new Promise(r => setTimeout(r, 120));
       replTerminal.sendText("q", false);
@@ -24,18 +24,18 @@ async function restartReplInExistingTerminal() {
       // Use PowerShell loop to auto-reconnect until available. Filter error stack traces.
       // Print the reconnect notice only once per session.
       getPythonCommandForTerminal().then(pythonCmd => {
-        const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm '${device}' 115200 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
+        const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm '${device}' 115200 --raw 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
         if (replTerminal) replTerminal.sendText(cmd, true);
       }).catch(() => {
         // Fallback to python if getPythonCommandForTerminal fails
-        const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { python -m serial.tools.miniterm '${device}' 115200 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
+        const cmd = `powershell -NoProfile -Command \"$once=$true; while ($true) { python -m serial.tools.miniterm '${device}' 115200 --raw 2>&1 | Where-Object { $_ -notmatch 'Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }\"`;
         if (replTerminal) replTerminal.sendText(cmd, true);
       });
     } else {
       // Loop forever: rerun miniterm on disconnect, allow Ctrl+C to stop; filter traceback blocks.
       // Print the reconnect notice only once per session.
       getPythonCommandForTerminal().then(pythonCmd => {
-        const cmd = `shown=0; while true; do ( ${pythonCmd} -m serial.tools.miniterm ${device} 115200 2>&1 | awk 'BEGIN{skip=0}
+        const cmd = `shown=0; while true; do ( ${pythonCmd} -m serial.tools.miniterm ${device} 115200 --raw 2>&1 | awk 'BEGIN{skip=0}
 $0 ~ /^--- Miniterm on /{skip=0; print; next}
 $0 ~ /^--- Quit:/{skip=0; print; next}
 $0 ~ /^Exception in thread [rt]x:/{skip=1;next}
@@ -55,7 +55,7 @@ skip==0 {print}' ); if [ $shown -eq 0 ]; then echo; echo 'Trying to reconnect ..
         if (replTerminal) replTerminal.sendText(cmd, true);
       }).catch(() => {
         // Fallback to python3 if getPythonCommandForTerminal fails
-        const cmd = `shown=0; while true; do ( python3 -m serial.tools.miniterm ${device} 115200 2>&1 | awk 'BEGIN{skip=0}
+        const cmd = `shown=0; while true; do ( python3 -m serial.tools.miniterm ${device} 115200 --raw 2>&1 | awk 'BEGIN{skip=0}
 $0 ~ /^--- Miniterm on /{skip=0; print; next}
 $0 ~ /^--- Quit:/{skip=0; print; next}
 $0 ~ /^Exception in thread [rt]x:/{skip=1;next}
@@ -94,7 +94,7 @@ import { getPythonPath, getPythonCommandForTerminal, clearPythonCache, checkPyse
 // import { monitor } from "./monitor"; // switched to auto-suspend REPL strategy
 
 export function activate(context: vscode.ExtensionContext) {
-  // Validar dependencias Python al activar la extensión
+  // Validate Python dependencies on extension activation
   const { execFile } = require('node:child_process');
   const pyScript = path.join(context.extensionPath, 'scripts', 'check_python_deps.py');
 
@@ -103,7 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
     execFile(pythonPath, [pyScript], (err: any, stdout: Buffer, stderr: Buffer) => {
       const out = String(stdout || '').trim();
       if (out === 'ok') return;
-      vscode.window.showWarningMessage('Dependencia faltante: pyserial. Instala pyserial en el entorno Python usado por la extensión para detectar puertos y comunicar con el dispositivo.');
+      vscode.window.showWarningMessage('Missing dependency: pyserial. Install pyserial in the Python environment used by the extension to detect ports and communicate with the device.');
     });
   }).catch(error => {
     vscode.window.showWarningMessage(`Error checking Python dependencies: ${error.message}`);
@@ -164,8 +164,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   function buildDefaultMpyIgnoreContent(): string {
     return [
-      '# .mpyignore — reglas por defecto (similar a .gitignore). Ajusta según tu proyecto.',
-      '# Las rutas son relativas a la raíz del workspace.',
+      '# .mpyignore — default rules (similar to .gitignore). Adjust according to your project.',
+      '# Paths are relative to the workspace root.',
       '',
       '# VCS',
       '.git/',
@@ -392,7 +392,7 @@ export function activate(context: vscode.ExtensionContext) {
       tree.refreshTree();
     }),
     vscode.commands.registerCommand("mpyWorkbench.pickPort", async () => {
-      // Siempre obtener la lista más reciente de puertos antes de mostrar el selector
+      // Always get the most recent port list before showing the selector
       const ports = await mp.listSerialPorts();
       const items: vscode.QuickPickItem[] = [
         { label: "auto", description: "Auto-detect device" },
@@ -516,7 +516,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const filename = await vscode.window.showInputBox({
-        prompt: "Nombre del nuevo archivo (relativo a la raíz del proyecto)",
+        prompt: "New file name (relative to project root)",
         placeHolder: "main.py, lib/utils.py, ..."
       });
       if (!filename || filename.endsWith("/")) return;
@@ -526,7 +526,7 @@ export function activate(context: vscode.ExtensionContext) {
         await fs.writeFile(abs, "", { flag: "wx" });
       } catch (e: any) {
         if (e.code !== "EEXIST") {
-          vscode.window.showErrorMessage("No se pudo crear el archivo: " + e.message);
+          vscode.window.showErrorMessage("Could not create file: " + e.message);
           return;
         }
       }
@@ -540,14 +540,14 @@ export function activate(context: vscode.ExtensionContext) {
           const matcher = await createIgnoreMatcher(ws.uri.fsPath);
           const rel = filename.replace(/^\/+/, "");
           if (matcher(rel.replace(/\\/g, '/'), false)) {
-            vscode.window.showInformationMessage(`Archivo guardado (ignorado para subir): ${filename}`);
+            vscode.window.showInformationMessage(`File saved (ignored for upload): ${filename}`);
           } else {
             await withAutoSuspend(() => mp.cpToDevice(abs, devicePath));
-            vscode.window.showInformationMessage(`Archivo guardado en local y subido al board: ${filename}`);
+            vscode.window.showInformationMessage(`File saved locally and uploaded to board: ${filename}`);
             tree.addNode(devicePath, false);
           }
         } catch (err: any) {
-          vscode.window.showErrorMessage(`Error al subir archivo al board: ${err?.message ?? err}`);
+          vscode.window.showErrorMessage(`Error uploading file to board: ${err?.message ?? err}`);
         }
         saveDisposable.dispose();
       });
@@ -583,7 +583,7 @@ export function activate(context: vscode.ExtensionContext) {
         await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
       }
       await withAutoSuspend(() => mp.cpToDevice(abs, node.path));
-      tree.addNode(node.path, false); // Añade archivo subido al árbol
+      tree.addNode(node.path, false); // Add uploaded file to tree
       vscode.window.showInformationMessage(`Synced local → board: ${rel}`);
     }),
     vscode.commands.registerCommand("mpyWorkbench.syncFileBoardToLocal", async (node: Esp32Node) => {
@@ -595,7 +595,7 @@ export function activate(context: vscode.ExtensionContext) {
       const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
-      tree.addNode(node.path, false); // Garantiza presencia en árbol (no relista)
+      tree.addNode(node.path, false); // Ensure presence in tree (no relisting)
       vscode.window.showInformationMessage(`Synced board → local: ${rel}`);
       try {
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
@@ -613,7 +613,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand("mpyWorkbench.syncBaseline", async () => {
       try {
-        // Cierra la terminal REPL si está abierta para evitar conflicto de puerto
+        // Close the REPL terminal if open to avoid port conflicts
         if (isReplOpen()) {
           await disconnectReplTerminal();
           await new Promise(r => setTimeout(r, 400));
@@ -664,23 +664,23 @@ export function activate(context: vscode.ExtensionContext) {
               const localPath = path.join(ws.uri.fsPath, relativePath);
               const devicePath = path.posix.join(rootPath, relativePath);
 
-              progress.report({ 
-                increment: (100 / total), 
-                message: `Uploading ${relativePath} (${++uploaded}/${total})` 
+              progress.report({
+                increment: (100 / total),
+                message: `Uploading ${relativePath} (${++uploaded}/${total})`
               });
-
+  
               // Ensure directory exists on device
               const deviceDir = path.posix.dirname(devicePath);
               if (deviceDir !== '.' && deviceDir !== rootPath) {
                 try {
                   await mp.mkdir(deviceDir);
-                  tree.addNode(deviceDir, true); // Añade carpeta al árbol
+                  tree.addNode(deviceDir, true); // Add folder to tree
                 } catch {
                   // Directory might already exist, ignore error
                 }
               }
               await mp.uploadReplacing(localPath, devicePath);
-              tree.addNode(devicePath, false); // Añade archivo al árbol
+              tree.addNode(devicePath, false); // Add file to tree
             }
           });
         });
@@ -704,7 +704,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromBoard", async () => {
-      // Cierra la terminal REPL si está abierta para evitar conflicto de puerto
+      // Close the REPL terminal if open to avoid port conflicts
       if (isReplOpen()) {
         await disconnectReplTerminal();
         await new Promise(r => setTimeout(r, 400));
@@ -730,7 +730,7 @@ export function activate(context: vscode.ExtensionContext) {
             progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
             await fs.mkdir(path.dirname(abs), { recursive: true });
             await mp.cpFromDevice(stat.path, abs);
-            tree.addNode(stat.path, false); // Añade archivo descargado al árbol
+            tree.addNode(stat.path, false); // Add downloaded file to tree
           }
         });
       });
@@ -810,44 +810,44 @@ export function activate(context: vscode.ExtensionContext) {
       const ed = vscode.window.activeTextEditor;
       if (!ed) { vscode.window.showErrorMessage("No active editor"); return; }
       await ed.document.save();
-      // Si la terminal REPL está abierta, ciérrala antes de ejecutar
+      // If the REPL terminal is open, close it before executing
       if (isReplOpen()) {
         await closeReplTerminal();
-        // Espera a que el sistema libere el puerto
+        // Wait for the system to release the port
         await new Promise(r => setTimeout(r, 400));
       }
       // Intenta abrir la terminal REPL
       try {
         await openReplTerminal(context);
       } catch (err) {
-        vscode.window.showErrorMessage("No se pudo abrir la terminal REPL. El puerto puede estar ocupado o desconectado. Cierra cualquier proceso que use el puerto e inténtalo de nuevo.");
+        vscode.window.showErrorMessage("Could not open REPL terminal. The port may be busy or disconnected. Close any processes using the port and try again.");
         return;
       }
       const term = await getReplTerminal(context);
-      // Pausa mayor para evitar que Ctrl-* se trate como señal del host antes de que miniterm tome control
+      // Longer pause to avoid Ctrl-* being treated as host signals before miniterm takes control
       await new Promise(r => setTimeout(r, 600));
-      // Entrar en RAW REPL (no eco de entrada). Evitar Ctrl-C aquí porque puede generar KeyboardInterrupt en miniterm si aún no está listo
+      // Enter RAW REPL (no input echo). Avoid Ctrl-C here as it may generate KeyboardInterrupt in miniterm if not ready yet
       term.sendText("\x01", false); // Ctrl-A (raw REPL)
       await new Promise(r => setTimeout(r, 150));
       // Send the complete file content; in RAW REPL the text is not shown
       const text = ed.document.getText().replace(/\r\n/g, "\n");
       term.sendText(text, true);
-      // Finalizar y ejecutar
-      term.sendText("\x04", false); // Ctrl-D (ejecutar en raw)
-      // Volver al REPL amigable tras un pequeño intervalo
+      // Finalize and execute
+      term.sendText("\x04", false); // Ctrl-D (execute in raw)
+      // Return to friendly REPL after a small interval
       await new Promise(r => setTimeout(r, 200));
       term.sendText("\x02", false); // Ctrl-B (friendly REPL)
     }),
     vscode.commands.registerCommand("mpyWorkbench.checkDiffs", async () => {
         // ...existing code...
         const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-        // Helper para convertir ruta local relativa a ruta absoluta en el board
+        // Helper to convert local relative path to absolute path on board
         const toDevicePath = (localRel: string) => {
           const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
           if (normRoot === "/") return "/" + localRel;
           return localRel === "" ? normRoot : normRoot + "/" + localRel;
         };
-      // Cierra la terminal REPL si está abierta para evitar conflicto de puerto
+      // Close the REPL terminal if open to avoid port conflicts
       if (isReplOpen()) {
         await disconnectReplTerminal();
         await new Promise(r => setTimeout(r, 400));
@@ -886,10 +886,10 @@ export function activate(context: vscode.ExtensionContext) {
           if (devicePath === normRoot) return "";
           return devicePath.replace(/^\//, "");
         };
-        // Aplica ignore/filtros en local antes de comparar
+        // Apply ignore/filters locally before comparing
         const matcher = await createIgnoreMatcher(ws.uri.fsPath);
         const localManifest = await buildManifest(ws.uri.fsPath, matcher);
-        // Solo archivos locales no ignorados
+        // Only local files that are not ignored
         const localFiles = Object.keys(localManifest.files);
         // Obtén listado del board
         const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
@@ -919,7 +919,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        // Archivos en el board que no existen localmente (no ignorados)
+        // Files on board that don't exist locally (not ignored)
         for (const [rel, deviceFile] of deviceFileMap.entries()) {
           if (!localFiles.includes(rel)) {
             diffSet.add(deviceFile.path);
@@ -927,12 +927,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         progress.report({ message: "Checking local files..." });
-        // Archivos que existen localmente pero no en el board
+        // Files that exist locally but not on board
         const localOnlySet = new Set<string>();
         for (const localRel of localFiles) {
           const deviceFile = deviceFileMap.get(localRel);
           if (!deviceFile) {
-            // Solo agrega si no está ignorado
+            // Only add if not ignored
             localOnlySet.add(toDevicePath(localRel));
           }
         }
@@ -1079,7 +1079,7 @@ export function activate(context: vscode.ExtensionContext) {
             progress.report({ message: `${action} ${rel} (${++done}/${total})` });
             
             await mp.uploadReplacing(abs, devicePath);
-            tree.addNode(devicePath, false); // Añade archivo subido al árbol
+            tree.addNode(devicePath, false); // Add uploaded file to tree
           }
         });
       });
@@ -1159,7 +1159,7 @@ export function activate(context: vscode.ExtensionContext) {
             progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
             await fs.mkdir(path.dirname(abs), { recursive: true });
             await mp.cpFromDevice(devicePath, abs);
-            tree.addNode(devicePath, false); // Añade archivo descargado al árbol
+            tree.addNode(devicePath, false); // Add downloaded file to tree
           }
         });
       });
@@ -1326,7 +1326,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(`Failed to delete files from board: ${error?.message ?? String(error)}`);
         }
       });
-      // Actualiza el árbol sin relistar: deja el directorio raíz vacío en cache
+      // Update tree without relisting: leave root directory empty in cache
       tree.resetDir(rootPath);
     }),
     vscode.commands.registerCommand("mpyWorkbench.deleteAllBoardFromView", async () => {
@@ -1357,9 +1357,9 @@ export function activate(context: vscode.ExtensionContext) {
         : "/";
       const baseLabel = baseDevice === "/" ? "/" : baseDevice;
       const newName = await vscode.window.showInputBox({
-        prompt: `Nombre del nuevo archivo (en ${baseLabel})`,
-        placeHolder: "nombre.ext o subcarpeta/nombre.ext",
-        validateInput: v => v && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "El nombre no debe terminar en / ni estar vacío"
+        prompt: `New file name (in ${baseLabel})`,
+        placeHolder: "filename.ext or subfolder/filename.ext",
+        validateInput: v => v && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "Name must not end with / and cannot be empty"
       });
       if (!newName) return;
       const devicePath = baseDevice === "/" ? `/${newName.replace(/^\//, "")}` : `${baseDevice}/${newName.replace(/^\//, "")}`;
@@ -1371,9 +1371,9 @@ export function activate(context: vscode.ExtensionContext) {
         await fs.writeFile(localPath, "");
         // Upload to board
         await mp.uploadReplacing(localPath, devicePath);
-        vscode.window.showInformationMessage(`Archivo creado: ${devicePath}`);
+        vscode.window.showInformationMessage(`File created: ${devicePath}`);
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Error al crear archivo: ${err?.message ?? err}`);
+        vscode.window.showErrorMessage(`Error creating file: ${err?.message ?? err}`);
       }
       vscode.commands.executeCommand("mpyWorkbench.refresh");
     }),
@@ -1385,9 +1385,9 @@ export function activate(context: vscode.ExtensionContext) {
         : "/";
       const baseLabel = baseDevice === "/" ? "/" : baseDevice;
       const newName = await vscode.window.showInputBox({
-        prompt: `Nombre de la nueva carpeta (en ${baseLabel})`,
-        placeHolder: "carpeta o subcarpeta/nombre",
-        validateInput: v => v && !v.endsWith(".") && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "El nombre no debe terminar en / ni estar vacío"
+        prompt: `New folder name (in ${baseLabel})`,
+        placeHolder: "folder or subfolder/name",
+        validateInput: v => v && !v.endsWith(".") && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "Name must not end with / and cannot be empty"
       });
       if (!newName) return;
       const devicePath = baseDevice === "/" ? `/${newName.replace(/^\//, "")}` : `${baseDevice}/${newName.replace(/^\//, "")}`;
@@ -1396,9 +1396,9 @@ export function activate(context: vscode.ExtensionContext) {
         const relLocal = devicePath.replace(/^\//, "");
         const localPath = path.join(ws, relLocal);
         await fs.mkdir(localPath, { recursive: true });
-        vscode.window.showInformationMessage(`Carpeta creada: ${devicePath}`);
+        vscode.window.showInformationMessage(`Folder created: ${devicePath}`);
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Error al crear carpeta: ${err?.message ?? err}`);
+        vscode.window.showErrorMessage(`Error creating folder: ${err?.message ?? err}`);
       }
       vscode.commands.executeCommand("mpyWorkbench.refresh");
     }),
@@ -1409,9 +1409,9 @@ export function activate(context: vscode.ExtensionContext) {
       const base = path.posix.dirname(oldPath);
       const oldName = path.posix.basename(oldPath);
       const newName = await vscode.window.showInputBox({
-        prompt: `Nuevo nombre para ${oldName}`,
+        prompt: `New name for ${oldName}`,
         value: oldName,
-        validateInput: v => v && v !== oldName ? undefined : "El nombre debe ser diferente y no vacío"
+        validateInput: v => v && v !== oldName ? undefined : "Name must be different and not empty"
       });
       if (!newName || newName === oldName) return;
       const newPath = base === "/" ? `/${newName}` : `${base}/${newName}`;
@@ -1419,7 +1419,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await mp.mvOnDevice(oldPath, newPath);
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Error al renombrar en el board: ${err?.message ?? err}`);
+        vscode.window.showErrorMessage(`Error renaming on board: ${err?.message ?? err}`);
         return;
       }
       // Try to rename locally if file exists locally
@@ -1435,7 +1435,7 @@ export function activate(context: vscode.ExtensionContext) {
           // If file doesn't exist locally, ignore
         }
       }
-      vscode.window.showInformationMessage(`Renombrado: ${oldPath} → ${newPath}`);
+      vscode.window.showInformationMessage(`Renamed: ${oldPath} → ${newPath}`);
       // Refresh tree
       const tree = vscode.extensions.getExtension("DanielBucam.mpy-workbench")?.exports?.esp32Tree as { refreshTree: () => void };
       if (tree && typeof tree.refreshTree === "function") tree.refreshTree();
@@ -1453,10 +1453,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (!enabled) {
         const now = Date.now();
         if (now - lastLocalOnlyNotice > 5000) {
-          vscode.window.setStatusBarMessage("Board: Auto sync desactivado — guardado solo en local (workspace)", 3000);
+          vscode.window.setStatusBarMessage("Board: Auto sync disabled — saved locally only (workspace)", 3000);
           lastLocalOnlyNotice = now;
         }
-        return; // solo guardar en local
+        return; // save locally only
       }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const rel = path.relative(ws.uri.fsPath, doc.uri.fsPath).replace(/\\/g, "/");
@@ -1509,7 +1509,7 @@ async function getReplTerminal(context: vscode.ExtensionContext): Promise<vscode
     // Windows: keep trying to reconnect using PowerShell loop; filter error stack traces. Ctrl+C to stop.
     // Print reconnect notice only once per session.
     const pythonCmd = await getPythonCommandForTerminal().catch(() => 'python');
-    const cmd = `powershell -NoProfile -Command "${pythonCmd} -c 'import serial' 2>$null; if ($LASTEXITCODE -ne 0) { echo 'ERROR: pyserial not installed. Install with: pip install pyserial' }; $once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm ${device} 115200 2>&1 | Where-Object { $_ -notmatch '^--- exit ---|Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port|During handling of the above exception|os.read\(' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }"`;
+    const cmd = `powershell -NoProfile -Command "${pythonCmd} -c 'import serial' 2>$null; if ($LASTEXITCODE -ne 0) { echo 'ERROR: pyserial not installed. Install with: pip install pyserial' }; $once=$true; while ($true) { ${pythonCmd} -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | Where-Object { $_ -notmatch '^--- exit ---|Exception in thread (rx|tx)|Traceback|SerialException|OSError:|could not open port|During handling of the above exception|os.read\(' }; if ($once) { echo ''; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; $once=$false }; Start-Sleep -Seconds 1 }"`;
     replTerminal = vscode.window.createTerminal({
       name: "ESP32 REPL",
       shellPath: "cmd.exe",
@@ -1536,7 +1536,7 @@ index($0, "serial/serialposix.py") {next}
 index($0, "/threading.py") {next}
 skip==0 {print}'`;
     const pythonCmd = await getPythonCommandForTerminal().catch(() => 'python3');
-    const cmd = `ANNOUNCED=0; TRIED=0; while true; do if ${pythonCmd} -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using ${pythonCmd}..."; ANNOUNCED=1; fi; ${pythonCmd} -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif python -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using python..."; ANNOUNCED=1; fi; python -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; elif /usr/bin/python3 -c "import serial" 2>/dev/null; then if [ $ANNOUNCED -eq 0 ]; then echo "Using /usr/bin/python3..."; ANNOUNCED=1; fi; /usr/bin/python3 -m serial.tools.miniterm ${device} 115200 2>&1 | ${awkFilter}; else echo; echo "ERROR: pyserial not found in any Python installation."; echo "Try installing with one of:"; echo "  pip3 install pyserial"; echo "  python3 -m pip install pyserial"; echo "Available Pythons:"; which python3 python /usr/bin/python3 2>/dev/null || echo "  None found"; fi; if [ $TRIED -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; TRIED=1; fi; sleep 1; done`;
+    const cmd = `ANNOUNCED=0; TRIED=0; while true; do if ${pythonCmd} -c "import serial" 2>/dev/null; then ${pythonCmd} -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | ${awkFilter}; elif python -c "import serial" 2>/dev/null; then python -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | ${awkFilter}; elif /usr/bin/python3 -c "import serial" 2>/dev/null; then /usr/bin/python3 -m serial.tools.miniterm ${device} 115200 --eol LF 2>&1 | ${awkFilter}; else echo; echo "ERROR: pyserial not found in any Python installation."; echo "Try installing with one of:"; echo "  pip3 install pyserial"; echo "  python3 -m pip install pyserial"; echo "Available Pythons:"; which python3 python /usr/bin/python3 2>/dev/null || echo "  None found"; fi; if [ $TRIED -eq 0 ]; then echo; echo 'Trying to reconnect ... (Ctrl+C to cancel)'; TRIED=1; fi; sleep 1; done`;
     replTerminal = vscode.window.createTerminal({
       name: "ESP32 REPL",
       shellPath: userShell,
@@ -1644,7 +1644,7 @@ vscode.commands.registerCommand("mpyWorkbench.rename", async (node: Esp32Node) =
     } else if (typeof mp.mv === "function") {
       await withAutoSuspend(() => mp.mv(oldPath, newPath));
     } else {
-      vscode.window.showErrorMessage("No se encontró función de rename/mv en mp.");
+      vscode.window.showErrorMessage("No rename/mv function found in mp.");
       return;
     }
     vscode.window.showInformationMessage(`Renombrado: ${oldPath} → ${newPath}`);

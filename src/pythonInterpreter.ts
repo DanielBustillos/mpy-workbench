@@ -246,18 +246,18 @@ export class PythonInterpreterManager {
             packageManager = 'pip (o usa apt: sudo apt install python3-serial)';
         }
 
-        const message = `MPY Workbench requiere el paquete 'pyserial' para comunicarse con tu placa MicroPython.`;
+        const message = `MPY Workbench requires the 'pyserial' package to communicate with your MicroPython board.`;
 
-        vscode.window.showWarningMessage(message, 'Instalar pyserial', 'Más información').then(selection => {
-            if (selection === 'Instalar pyserial') {
+        vscode.window.showWarningMessage(message, 'Install pyserial', 'More information').then(selection => {
+            if (selection === 'Install pyserial') {
                 // Try to install pyserial automatically
                 vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
-                    title: 'Instalando pyserial...',
+                    title: 'Installing pyserial...',
                     cancellable: false
                 }, async (progress) => {
                     try {
-                        progress.report({ increment: 0, message: 'Instalando pyserial...' });
+                        progress.report({ increment: 0, message: 'Installing pyserial...' });
 
                         // Run the installation command
                         const installProcess = require('child_process').exec(installCommand);
@@ -265,15 +265,15 @@ export class PythonInterpreterManager {
                         return new Promise<void>((resolve, reject) => {
                             installProcess.on('close', (code: number) => {
                                 if (code === 0) {
-                                    progress.report({ increment: 100, message: 'Instalación completada' });
+                                    progress.report({ increment: 100, message: 'Installation completed' });
                                     vscode.window.showInformationMessage(
-                                        'pyserial se instaló correctamente. Reinicia VS Code para que los cambios surtan efecto.'
+                                        'pyserial was installed successfully. Restart VS Code for the changes to take effect.'
                                     );
                                     // Clear cache so it will re-validate on next use
                                     this.clearCache();
                                     resolve();
                                 } else {
-                                    reject(new Error(`Instalación fallida con código ${code}`));
+                                    reject(new Error(`Installation failed with code ${code}`));
                                 }
                             });
 
@@ -283,19 +283,19 @@ export class PythonInterpreterManager {
                         });
                     } catch (error: any) {
                         vscode.window.showErrorMessage(
-                            `Error instalando pyserial: ${error.message}. Instala manualmente con: ${installCommand}`
+                            `Error installing pyserial: ${error.message}. Install manually with: ${installCommand}`
                         );
                     }
                 });
-            } else if (selection === 'Más información') {
+            } else if (selection === 'More information') {
                 // Open the README or show more detailed instructions
-                const moreInfoMessage = `Para instalar pyserial:
+                const moreInfoMessage = `To install pyserial:
 
-1. Abre una terminal
-2. Ejecuta: ${installCommand}
-3. Reinicia VS Code
+1. Open a terminal
+2. Run: ${installCommand}
+3. Restart VS Code
 
-O visita: https://pypi.org/project/pyserial/`;
+Or visit: https://pypi.org/project/pyserial/`;
 
                 vscode.window.showInformationMessage(moreInfoMessage);
             }

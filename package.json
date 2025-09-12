@@ -3,12 +3,19 @@
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via raw REPL (pyserial).",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "DanielBucam",
   "engines": {
     "vscode": "^1.84.0"
   },
   "extensionDependencies": [],
+  "extensionPack": [],
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
   "extensionPack": [],
   "categories": [
     "Programming Languages",
@@ -132,7 +139,7 @@
       },
       {
         "command": "mpyWorkbench.openRepl",
-        "title": "MPY Workbench: Open ESP32 REPL",
+        "title": "MPY Workbench: Open REPL",
         "icon": "$(terminal)"
       },
       {
@@ -243,7 +250,7 @@
       },
       {
         "command": "mpyWorkbench.openReplFromView",
-        "title": "MPY Workbench: Open ESP32 REPL (View)",
+        "title": "MPY Workbench: Open REPL (View)",
         "icon": "$(terminal)"
       },
       {
@@ -400,7 +407,7 @@
         "mpyWorkbench.autoSyncOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Sincronizar automáticamente al guardar: si está activado, al guardar un archivo local también se sube al board; si está desactivado, solo se guarda en local. Per-workspace override available in .mpystudio/config.json."
+          "description": "Auto-sync on save: when enabled, saving a local file also uploads it to the board; when disabled, only saves locally. Per-workspace override available in .mpystudio/config.json."
         },
         "mpyWorkbench.connect": {
           "type": "string",

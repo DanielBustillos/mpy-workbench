@@ -1,112 +1,192 @@
 # Python Interpreter Integration
 
-This document describes how MPY Workbench integrates with VS Code's Python interpreter configuration.
+This document describes how MPY Workbench integrates with VS Code's Python configuration to use the correct Python interpreter instead of hardcoded paths.
 
 ## Overview
 
-MPY Workbench now uses the Python interpreter configured in VS Code instead of hardcoded `python3` commands. This ensures compatibility with virtual environments, conda environments, and custom Python installations.
+MPY Workbench now automatically detects and uses the Python interpreter configured in VS Code, providing seamless integration with:
 
-## Configuration Priority
+- VS Code's Python extension
+- Virtual environments
+- Conda environments
+- System Python installations
+- Custom Python installations
 
-The extension tries to find the Python interpreter in the following order:
+## How It Works
 
-1. **MPY Workbench Override** - `mpyWorkbench.pythonPath` setting
-2. **Python Extension API** - Active interpreter from the Python extension
-3. **Python Extension Settings** - `python.defaultInterpreterPath` or `python.pythonPath`
-4. **System Fallbacks** - Common Python installation paths
-5. **Last Resort** - `python3` command
+### 1. Python Interpreter Detection
 
-## Configuration Options
+The extension uses a multi-tier approach to find the correct Python interpreter:
 
-### MPY Workbench Python Path Override
+1. **MPY Workbench Override** (`mpyWorkbench.pythonPath` setting)
+   - If set, this takes highest priority
+   - Allows users to specify a custom Python path for MPY Workbench specifically
 
-You can override the Python interpreter specifically for MPY Workbench:
+2. **VS Code Python Extension API**
+   - Queries the Python extension for the active interpreter
+   - Supports both newer and older versions of the Python extension
+   - Respects workspace-specific interpreter settings
 
-```json
-{
-  "mpyWorkbench.pythonPath": "/path/to/your/python"
-}
-```
+3. **VS Code Configuration**
+   - Falls back to `python.defaultInterpreterPath` (global setting)
+   - Falls back to `python.pythonPath` (deprecated but still used)
 
-This setting takes precedence over all other Python configurations.
+4. **System Fallbacks**
+   - `python3`, `python`, `/usr/bin/python3`, etc.
+   - Platform-specific common installation paths
 
-### Using VS Code's Python Configuration
+### 2. Caching and Performance
 
-The extension automatically uses the Python interpreter selected in VS Code:
-
-1. Open Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
-2. Run "Python: Select Interpreter"
-3. Choose your desired Python interpreter
-4. MPY Workbench will automatically use this interpreter
-
-## Features
-
-### Automatic Cache Management
-
-- Python interpreter path is cached for 30 seconds for performance
+- Python interpreter path is cached for 30 seconds to improve performance
 - Cache is automatically cleared when Python configuration changes
 - Cache is cleared when the Python extension is activated/deactivated
 
-### Fallback Support
+### 3. Validation
 
-If the configured Python interpreter is not available, the extension will:
+Each detected Python interpreter is validated to ensure:
+- The executable exists and is accessible
+- It has the required `serial` module installed
+- It can run basic Python commands
 
-1. Try other common Python installation paths
-2. Validate each Python interpreter for required modules (pyserial)
-3. Fall back to `python3` as a last resort
+## Configuration
 
-### Cross-Platform Support
+### Extension Settings
 
-The extension handles platform-specific Python installations:
+Add these to your VS Code `settings.json`:
 
-**Windows:**
-- `python`, `python3`, `py -3`, `py`
-- Local AppData Python installations
+```json
+{
+  "mpyWorkbench.pythonPath": "",
+  "python.defaultInterpreterPath": "python3"
+}
+```
 
-**macOS/Linux:**
-- `python3`, `python`
-- Common system paths (`/usr/bin/python3`, `/usr/local/bin/python3`, etc.)
-- Homebrew installations (`/opt/homebrew/bin/python3`)
+### Workspace-Specific Settings
 
-## Updated Components
+For workspace-specific Python configuration:
 
-The following components now use the configured Python interpreter:
+```json
+{
+  "python.defaultInterpreterPath": "/path/to/venv/bin/python"
+}
+```
 
-1. **Dependency Check** - Validates pyserial installation
-2. **Serial Tool Execution** - All mpremote operations
-3. **Raw Python Execution** - PyRaw directory listing
-4. **Serial Monitor** - Terminal-based monitoring
-5. **REPL Terminal** - ESP32 REPL connections
+## Files Modified
+
+The following files were updated to use the configured Python interpreter:
+
+- `src/pythonInterpreter.ts` - New utility module for Python interpreter detection
+- `src/extension.ts` - Updated dependency checks and terminal creation
+- `src/mpremote.ts` - Updated tool execution
+- `src/pyraw.ts` - Updated raw Python execution
+- `src/monitor.ts` - Updated serial monitor
+- `package.json` - Added Python path configuration setting
+
+## Benefits
+
+### ✅ Automatic Integration
+- No manual configuration required in most cases
+- Automatically uses the same Python environment as your projects
+
+### ✅ Environment Support
+- Works with virtual environments (`venv`, `virtualenv`)
+- Supports Conda environments
+- Compatible with Poetry, Pipenv, and other environment managers
+
+### ✅ Flexibility
+- Override option for specific use cases
+- Graceful fallbacks when Python extension is not available
+- Platform-independent implementation
+
+### ✅ Performance
+- Intelligent caching reduces filesystem operations
+- Lazy loading of Python extension API
+- Minimal impact on extension startup time
 
 ## Troubleshooting
 
 ### Python Not Found
 
-If you see "Python not found" errors:
+If MPY Workbench cannot find a suitable Python interpreter:
 
-1. Ensure Python is installed and accessible
-2. Install pyserial: `pip install pyserial`
-3. Set `mpyWorkbench.pythonPath` to the correct Python path
-4. Restart VS Code
+1. **Check Python Extension**: Ensure the Python extension is installed and activated
+2. **Configure Interpreter**: Use `Python: Select Interpreter` command in VS Code
+3. **Manual Override**: Set `mpyWorkbench.pythonPath` in settings
+4. **Install Dependencies**: Ensure `pyserial` is installed in the Python environment
 
-### Virtual Environment Issues
+### Common Issues
 
-If using virtual environments:
+**Issue**: "Python interpreter not found"
+**Solution**: Install Python and the Python extension, or set `mpyWorkbench.pythonPath`
 
-1. Activate your virtual environment
-2. Select the interpreter in VS Code: "Python: Select Interpreter"
-3. Ensure pyserial is installed in the virtual environment
+**Issue**: "Serial module not found"
+**Solution**: Install pyserial in the detected Python environment:
+```bash
+pip install pyserial
+```
 
-### Permission Issues
+**Issue**: Wrong Python version being used
+**Solution**: Check VS Code's Python interpreter selection or set `mpyWorkbench.pythonPath`
 
-On macOS/Linux, if you get permission errors:
+## Technical Details
 
-1. Ensure your user has access to the serial port
-2. Add your user to the dialout group: `sudo usermod -a -G dialout $USER`
-3. Restart your session
+### Python Extension API Compatibility
 
-## Migration from Hardcoded Python3
+The implementation supports multiple versions of the Python extension:
 
-Existing installations will automatically migrate to use the configured Python interpreter. No manual changes are required.
+- **Newer versions**: Uses `pythonApi.settings.getExecutionDetails()`
+- **Older versions**: Uses `pythonApi.getActiveInterpreter()`
+- **Fallback**: Uses VS Code configuration settings
 
-The extension maintains backward compatibility and will fall back to `python3` if no other interpreter is found.
+### Platform Support
+
+- **Windows**: Supports `python`, `python3`, `py -3`, and common installation paths
+- **macOS**: Supports Homebrew, system Python, and custom installations
+- **Linux**: Supports system Python, distro packages, and custom paths
+
+### Error Handling
+
+- Graceful degradation when Python extension is not available
+- Clear error messages for troubleshooting
+- Fallback chains prevent extension failure
+- Validation prevents use of incompatible Python installations
+
+## Migration Guide
+
+### From Previous Versions
+
+No action required! The extension automatically detects and uses your configured Python interpreter. Previous hardcoded `python3` usage is now dynamic.
+
+### For Extension Developers
+
+To use the configured Python interpreter in your code:
+
+```typescript
+import { getPythonPath, getPythonCommandForTerminal } from './pythonInterpreter';
+
+// Get Python executable path
+const pythonPath = await getPythonPath();
+
+// Get Python command for terminal (handles quoting)
+const pythonCmd = await getPythonCommandForTerminal();
+
+// Use in execFile calls
+execFile(pythonPath, ['-c', 'print("Hello")'], callback);
+
+// Use in terminal commands
+terminal.sendText(`${pythonCmd} -m serial.tools.miniterm ...`);
+```
+
+## Future Enhancements
+
+Potential improvements for future versions:
+
+- Support for Python environment discovery
+- Integration with environment managers (Conda, Poetry, etc.)
+- Automatic dependency installation
+- Python version compatibility checking
+- Enhanced error reporting and diagnostics
+
+---
+
+This integration ensures MPY Workbench seamlessly works with your Python development environment, providing a consistent and reliable experience across different setups and platforms.

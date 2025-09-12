@@ -51,7 +51,7 @@ class SerialMonitor {
         const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
         const device = (connect || '').replace(/^serial:\/\//, "").replace(/^serial:\//, "");
         // Spawn a short-lived miniterm to read any pending output, then kill.
-        const args = ["-m", "serial.tools.miniterm", device, "115200"];
+        const args = ["-m", "serial.tools.miniterm", device, "115200", "--eol", "LF"];
         const pythonPath = await (0, pythonInterpreter_1.getPythonPath)();
         const proc = (0, node_child_process_1.spawn)(pythonPath, args, { stdio: ["ignore", "pipe", "pipe"] });
         let buf = "";
