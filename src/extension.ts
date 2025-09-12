@@ -1070,8 +1070,12 @@ export function activate(context: vscode.ExtensionContext) {
         // Files on board that don't exist locally
         for (const [rel, deviceFile] of deviceFileMap.entries()) {
           if (!localFiles.includes(rel)) {
+            const localPath = path.join(ws.uri.fsPath, ...rel.split('/'));
+            console.log(`[DIFF-LOG] Local path: ${localPath} (expected)`);
+            console.log(`[DIFF-LOG] Board path: ${deviceFile.path}`);
+            console.log(`[DIFF-LOG] Result: FILE MISSING LOCALLY - Will be marked for sync`);
+            console.log(`[DIFF-LOG] ---`);
             diffSet.add(deviceFile.path);
-            console.log(`[DEBUG] checkDiffs: Device file not local: ${rel} -> ${deviceFile.path}`);
           }
         }
 
@@ -1081,9 +1085,13 @@ export function activate(context: vscode.ExtensionContext) {
         for (const localRel of localFiles) {
           const deviceFile = deviceFileMap.get(localRel);
           if (!deviceFile) {
+            const abs = path.join(ws.uri.fsPath, ...localRel.split('/'));
             const devicePath = toDevicePath(localRel);
+            console.log(`[DIFF-LOG] Local path: ${abs}`);
+            console.log(`[DIFF-LOG] Board path: ${devicePath} (expected)`);
+            console.log(`[DIFF-LOG] Result: FILE MISSING ON BOARD - Will be marked as local-only`);
+            console.log(`[DIFF-LOG] ---`);
             localOnlySet.add(devicePath);
-            console.log(`[DEBUG] checkDiffs: Local-only file: ${localRel} -> ${devicePath}`);
           }
         }
 
