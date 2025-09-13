@@ -1,7 +1,9 @@
 
 # MPY Workbench — MicroPython file manager for VS Code
 
-Inspired by Thonny’s simplicity, this extension adds remote file management, integrated REPL, and effortless two-way sync, making it easy to develop MicroPython projects from VS Code.
+Inspired by Thonny’s simplicity, this extension streamlines MicroPython development across multiple boards. It provides remote file management, an integrated REPL, and automatic two-way synchronization, enabling a smoother workflow within VS Code.
+
+The extension leverages **mpremote** for all board interactions, including file transfer, REPL connectivity, and command execution.
 
 ## Main features
 
@@ -55,20 +57,15 @@ Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or
 
 The Python path used by the extension can be adjusted in the extension settings if a specific interpreter needs to be selected.
 
-## Troubleshooting
-
-- If file operations fail, confirm the correct serial port is selected and that no other tool is holding the port open.
-- If an upload fails because a path is a directory, the extension will skip directories and only upload files.
-
 ## Next steps
 
 - ✅ Broaden board compatibility (currently tested only with ESP32-S3 and ESP32-C3)
 - 🔌 Add firmware flashing support for boards
-- 🎨 Improve REPL styling for better readability and usability
+- 🪟 Perform full Windows testing: validate mpremote compatibility with COM ports and ensure consistent behavior of file operations and REPL across Windows environments  
 
 ## Contributing
 
-Issues and pull requests are welcome. See the repository for development and packaging notes.
+Issues and pull requests are welcome.
 
 ## License
 
