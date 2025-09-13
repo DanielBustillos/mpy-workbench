@@ -1,5 +1,15 @@
 # Cambios
 
+## [0.2.4] - 2025-09-13
+### Cambiado
+- **Migración de pyserial a mpremote**: Reemplazado el uso directo de pyserial con mpremote para todas las operaciones de comunicación serial
+- **Validación de dependencias**: Actualizada la validación de Python para verificar disponibilidad de mpremote en lugar de pyserial
+- **Scripts de utilidad**: Reemplazado `pyserial_tool.py` con `mpremote_tool.py` que usa comandos mpremote
+- **Documentación**: Actualizadas las instrucciones de instalación y requisitos para usar mpremote
+
+### Eliminado
+- Dependencia directa de pyserial (mpremote incluye pyserial internamente)
+
 ## [0.2.0] - 2025-09-12
 ### Añadido
 - **Integración completa con el intérprete Python de VS Code**: La extensión ahora usa automáticamente el intérprete Python configurado en VS Code en lugar de comandos hardcoded como `python3`

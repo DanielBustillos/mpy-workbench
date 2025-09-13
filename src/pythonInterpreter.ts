@@ -12,7 +12,7 @@ export class PythonInterpreterManager {
     private static cachedInterpreter: string | null = null;
     private static lastCacheTime = 0;
     private static readonly CACHE_DURATION = 30000; // 30 seconds
-    private static lastPyserialNotification = 0;
+    private static lastMpremoteNotification = 0;
     private static readonly NOTIFICATION_COOLDOWN = 300000; // 5 minutes
 
     /**
@@ -37,9 +37,9 @@ export class PythonInterpreterManager {
                 if (validation.valid) {
                     this.cacheResult(pythonPath);
                     return pythonPath;
-                } else if (validation.missingPyserial) {
-                    // Show pyserial installation notification
-                    this.showPyserialInstallationNotification(pythonPath);
+                } else if (validation.missingMpremote) {
+                    // Show mpremote installation notification
+                    this.showMpremoteInstallationNotification(pythonPath);
                 }
             }
         } catch (error) {
@@ -54,9 +54,9 @@ export class PythonInterpreterManager {
                 if (validation.valid) {
                     this.cacheResult(pythonPath);
                     return pythonPath;
-                } else if (validation.missingPyserial) {
-                    // Show pyserial installation notification
-                    this.showPyserialInstallationNotification(pythonPath);
+                } else if (validation.missingMpremote) {
+                    // Show mpremote installation notification
+                    this.showMpremoteInstallationNotification(pythonPath);
                 }
             }
         } catch (error) {
@@ -71,10 +71,10 @@ export class PythonInterpreterManager {
                 if (validation.valid) {
                     this.cacheResult(fallback);
                     return fallback;
-                } else if (validation.missingPyserial) {
-                    // Show pyserial installation notification for the first valid Python we find
-                    this.showPyserialInstallationNotification(fallback);
-                    // Continue looking for a working Python with pyserial
+                } else if (validation.missingMpremote) {
+                    // Show mpremote installation notification for the first valid Python we find
+                    this.showMpremoteInstallationNotification(fallback);
+                    // Continue looking for a working Python with mpremote
                 }
             } catch (error) {
                 // Continue to next fallback
@@ -195,38 +195,38 @@ export class PythonInterpreterManager {
     /**
      * Validate that a Python path is valid and has the required modules
      */
-    private static async validatePythonPath(pythonPath: string): Promise<{ valid: boolean; missingPyserial: boolean; error?: string }> {
+    private static async validatePythonPath(pythonPath: string): Promise<{ valid: boolean; missingMpremote: boolean; error?: string }> {
         try {
             // Test if Python executable exists and can run
             const { stdout } = await execFileAsync(pythonPath, ['-c', 'import sys; print(sys.version)'], { timeout: 5000 });
 
-            // Check if it has the required serial module
-            await execFileAsync(pythonPath, ['-c', 'import serial; from serial.tools import list_ports'], { timeout: 5000 });
+            // Check if mpremote command is available
+            await execFileAsync('mpremote', ['--version'], { timeout: 5000 });
 
-            return { valid: true, missingPyserial: false };
+            return { valid: true, missingMpremote: false };
         } catch (error: any) {
             const errorMessage = error.message || String(error);
 
-            // Check if it's specifically a pyserial import error
-            if (errorMessage.includes('No module named') && errorMessage.includes('serial')) {
-                return { valid: false, missingPyserial: true, error: errorMessage };
+            // Check if it's specifically an mpremote availability error
+            if (errorMessage.includes('mpremote') && (errorMessage.includes('not found') || errorMessage.includes('command not found'))) {
+                return { valid: false, missingMpremote: true, error: errorMessage };
             }
 
             // Other Python-related errors
-            return { valid: false, missingPyserial: false, error: errorMessage };
+            return { valid: false, missingMpremote: false, error: errorMessage };
         }
     }
 
     /**
-     * Show notification for missing pyserial
+     * Show notification for missing mpremote
      */
-    private static showPyserialInstallationNotification(pythonPath: string): void {
+    private static showMpremoteInstallationNotification(pythonPath: string): void {
         // Check cooldown to avoid spamming notifications
         const now = Date.now();
-        if (now - this.lastPyserialNotification < this.NOTIFICATION_COOLDOWN) {
+        if (now - this.lastMpremoteNotification < this.NOTIFICATION_COOLDOWN) {
             return; // Too soon since last notification
         }
-        this.lastPyserialNotification = now;
+        this.lastMpremoteNotification = now;
 
         const isWindows = process.platform === 'win32';
         const isMac = process.platform === 'darwin';
@@ -235,29 +235,29 @@ export class PythonInterpreterManager {
         let packageManager: string;
 
         if (isWindows) {
-            installCommand = `${pythonPath} -m pip install pyserial`;
+            installCommand = `${pythonPath} -m pip install mpremote`;
             packageManager = 'pip';
         } else if (isMac) {
-            installCommand = `${pythonPath} -m pip install pyserial`;
-            packageManager = 'pip (o usa Homebrew: brew install pyserial)';
+            installCommand = `${pythonPath} -m pip install mpremote`;
+            packageManager = 'pip (o usa Homebrew: brew install mpremote)';
         } else {
             // Linux
-            installCommand = `${pythonPath} -m pip install pyserial`;
-            packageManager = 'pip (o usa apt: sudo apt install python3-serial)';
+            installCommand = `${pythonPath} -m pip install mpremote`;
+            packageManager = 'pip (o usa apt: sudo apt install python3-mpremote)';
         }
 
-        const message = `MPY Workbench requires the 'pyserial' package to communicate with your MicroPython board.`;
+        const message = `MPY Workbench requires the 'mpremote' package to communicate with your MicroPython board.`;
 
-        vscode.window.showWarningMessage(message, 'Install pyserial', 'More information').then(selection => {
-            if (selection === 'Install pyserial') {
-                // Try to install pyserial automatically
+        vscode.window.showWarningMessage(message, 'Install mpremote', 'More information').then(selection => {
+            if (selection === 'Install mpremote') {
+                // Try to install mpremote automatically
                 vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
-                    title: 'Installing pyserial...',
+                    title: 'Installing mpremote...',
                     cancellable: false
                 }, async (progress) => {
                     try {
-                        progress.report({ increment: 0, message: 'Installing pyserial...' });
+                        progress.report({ increment: 0, message: 'Installing mpremote...' });
 
                         // Run the installation command
                         const installProcess = require('child_process').exec(installCommand);
@@ -267,7 +267,7 @@ export class PythonInterpreterManager {
                                 if (code === 0) {
                                     progress.report({ increment: 100, message: 'Installation completed' });
                                     vscode.window.showInformationMessage(
-                                        'pyserial was installed successfully. Restart VS Code for the changes to take effect.'
+                                        'mpremote was installed successfully. Restart VS Code for the changes to take effect.'
                                     );
                                     // Clear cache so it will re-validate on next use
                                     this.clearCache();
@@ -283,19 +283,19 @@ export class PythonInterpreterManager {
                         });
                     } catch (error: any) {
                         vscode.window.showErrorMessage(
-                            `Error installing pyserial: ${error.message}. Install manually with: ${installCommand}`
+                            `Error installing mpremote: ${error.message}. Install manually with: ${installCommand}`
                         );
                     }
                 });
             } else if (selection === 'More information') {
                 // Open the README or show more detailed instructions
-                const moreInfoMessage = `To install pyserial:
+                const moreInfoMessage = `To install mpremote:
 
 1. Open a terminal
 2. Run: ${installCommand}
 3. Restart VS Code
 
-Or visit: https://pypi.org/project/pyserial/`;
+Or visit: https://pypi.org/project/mpremote/`;
 
                 vscode.window.showInformationMessage(moreInfoMessage);
             }
@@ -319,22 +319,22 @@ Or visit: https://pypi.org/project/pyserial/`;
     }
 
     /**
-     * Check pyserial availability and show notification if missing
+     * Check mpremote availability and show notification if missing
      * This can be called on extension activation to proactively notify users
      */
-    static async checkPyserialAvailability(): Promise<boolean> {
+    static async checkMpremoteAvailability(): Promise<boolean> {
         try {
             const pythonPath = await this.getPythonPath();
             const validation = await this.validatePythonPath(pythonPath);
 
-            if (!validation.valid && validation.missingPyserial) {
-                this.showPyserialInstallationNotification(pythonPath);
+            if (!validation.valid && validation.missingMpremote) {
+                this.showMpremoteInstallationNotification(pythonPath);
                 return false;
             }
 
             return validation.valid;
         } catch (error) {
-            console.log('Error checking pyserial availability:', error);
+            console.log('Error checking mpremote availability:', error);
             return false;
         }
     }
@@ -381,8 +381,8 @@ export function clearPythonCache(): void {
 }
 
 /**
- * Check pyserial availability and show notification if missing
+ * Check mpremote availability and show notification if missing
  */
-export async function checkPyserialAvailability(): Promise<boolean> {
-    return PythonInterpreterManager.checkPyserialAvailability();
+export async function checkMpremoteAvailability(): Promise<boolean> {
+    return PythonInterpreterManager.checkMpremoteAvailability();
 }

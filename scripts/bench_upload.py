@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Benchmark upload time to a MicroPython board using:
-  1) This repo's pyserial uploader (scripts/pyserial_tool.py)
+  1) This repo's mpremote uploader (scripts/mpremote_tool.py)
   2) rshell cp to /pyboard
 
 Usage examples:
@@ -9,11 +9,11 @@ Usage examples:
     --src /path/to/file.py --dst /bench_benchmark.dat --repeats 5
 
   # Only one method
-  python3 scripts/bench_upload.py --port COM7 --src big.bin --method pyserial
+  python3 scripts/bench_upload.py --port COM7 --src big.bin --method mpremote
 
 Notes:
   - Requires rshell installed and on PATH for the rshell method.
-  - The pyserial method uses this repo's scripts/pyserial_tool.py with upload_replacing.
+  - The mpremote method uses this repo's scripts/mpremote_tool.py with upload_replacing.
   - Destination path for rshell is mapped to /pyboard<dst> automatically.
 """
 
@@ -30,7 +30,7 @@ from typing import List, Tuple
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PYSERIAL_TOOL = os.path.join(ROOT, "scripts", "pyserial_tool.py")
+MPREMOTE_TOOL = os.path.join(ROOT, "scripts", "mpremote_tool.py")
 
 
 def human_bytes(n: float) -> str:
@@ -47,12 +47,12 @@ def run_cmd(cmd: List[str]) -> Tuple[int, str, str]:
     return p.returncode, out, err
 
 
-def upload_pyserial(port: str, src: str, dst: str) -> Tuple[float, str]:
+def upload_mpremote(port: str, src: str, dst: str) -> Tuple[float, str]:
     start = time.perf_counter()
-    code, out, err = run_cmd([sys.executable, PYSERIAL_TOOL, "upload_replacing", "--port", port, "--src", src, "--dst", dst])
+    code, out, err = run_cmd([sys.executable, MPREMOTE_TOOL, "upload_replacing", "--port", port, "--src", src, "--dst", dst])
     dur = time.perf_counter() - start
     if code != 0:
-        raise RuntimeError(f"pyserial upload failed: {err.strip() or out.strip()}")
+        raise RuntimeError(f"mpremote upload failed: {err.strip() or out.strip()}")
     return dur, out.strip() or err.strip()
 
 
@@ -73,13 +73,13 @@ def upload_rshell(port: str, baud: int, src: str, dst: str) -> Tuple[float, str]
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Benchmark uploads via pyserial_tool.py vs rshell")
+    ap = argparse.ArgumentParser(description="Benchmark uploads via mpremote_tool.py vs rshell")
     ap.add_argument("--port", required=True, help="Serial port (e.g., /dev/tty.usbserial-xxxx or COM7)")
     ap.add_argument("--src", required=True, help="Local file to upload")
     ap.add_argument("--dst", default="/bench_upload.dat", help="Destination path on device (default: /bench_upload.dat)")
     ap.add_argument("--repeats", type=int, default=3, help="Number of runs per method (default: 3)")
     ap.add_argument("--baud", type=int, default=115200, help="Baud for rshell (default: 115200)")
-    ap.add_argument("--method", choices=["both", "pyserial", "rshell"], default="both", help="Which method(s) to test")
+    ap.add_argument("--method", choices=["both", "mpremote", "rshell"], default="both", help="Which method(s) to test")
     args = ap.parse_args()
 
     if not os.path.isfile(args.src):
@@ -88,8 +88,8 @@ def main():
     size = os.path.getsize(args.src)
 
     methods = []
-    if args.method in ("both", "pyserial"):
-        methods.append(("pyserial", lambda: upload_pyserial(args.port, args.src, args.dst)))
+    if args.method in ("both", "mpremote"):
+        methods.append(("mpremote", lambda: upload_mpremote(args.port, args.src, args.dst)))
     if args.method in ("both", "rshell"):
         methods.append(("rshell", lambda: upload_rshell(args.port, args.baud, args.src, args.dst)))
 

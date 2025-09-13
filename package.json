@@ -2,8 +2,8 @@
   "name": "mpy-workbench",
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
-  "description": "Browse and manage MicroPython files on ESP32 and similar boards via raw REPL (pyserial).",
-  "version": "0.2.2",
+  "description": "Browse and manage MicroPython files on ESP32 and similar boards via mpremote.",
+  "version": "0.2.4",
   "publisher": "DanielBucam",
   "engines": {
     "vscode": "^1.84.0"
@@ -442,7 +442,7 @@
         "mpyWorkbench.usePyRawList": {
           "type": "boolean",
           "default": false,
-          "description": "List directories using a Python raw REPL script (requires python3 + pyserial)."
+          "description": "List directories using a Python raw REPL script (requires python3 + mpremote)."
         },
         "mpyWorkbench.baudRate": {
           "type": "number",
