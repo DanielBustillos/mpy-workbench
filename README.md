@@ -51,7 +51,7 @@ Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or
 
 ## Python Requirements
 
-- **`pyserial`** (version 3.4 or higher) - For serial communication with MicroPython boards
+- **mpremote** — Used internally for all board operations (file management, REPL connection, command execution).
 
 MPY Workbench automatically uses the Python interpreter configured in VS Code. This ensures compatibility with virtual environments, conda environments, and custom Python installations.
 
