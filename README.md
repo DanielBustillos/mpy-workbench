@@ -53,7 +53,7 @@ Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or
 
 - **mpremote** — Used internally for all board operations (file management, REPL connection, command execution).
 
-MPY Workbench automatically uses the Python interpreter configured in VS Code. This ensures compatibility with virtual environments, conda environments, and custom Python installations.
+The Python path used by the extension can be adjusted in the extension settings if a specific interpreter needs to be selected.
 
 ## Troubleshooting
 
