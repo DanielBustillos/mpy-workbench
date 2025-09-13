@@ -12,6 +12,7 @@ import { exec } from "node:child_process";
 import { buildManifest, diffManifests, saveManifest, loadManifest, defaultIgnorePatterns, createIgnoreMatcher, Manifest } from "./sync";
 import { Esp32DecorationProvider } from "./decorations";
 import { listDirPyRaw } from "./pyraw";
+import { BoardOperations } from "./boardOperations";
 // import { monitor } from "./monitor"; // switched to auto-suspend REPL strategy
 import {
   disconnectReplTerminal,
@@ -25,7 +26,8 @@ import {
   isReplOpen,
   closeReplTerminal,
   openReplTerminal,
-  toLocalRelative
+  toLocalRelative,
+  toDevicePath
 } from "./mpremoteCommands";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -210,6 +212,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
   // Export decorations for use in other modules
   (global as any).esp32Decorations = decorations;
+
+  // Create BoardOperations instance
+  const boardOperations = new BoardOperations(tree, decorations);
   let lastLocalOnlyNotice = 0;
 
   // Status bar item to show workspace auto-sync state
@@ -874,283 +879,7 @@ export function activate(context: vscode.ExtensionContext) {
       tree.refreshTree();
     }),
     vscode.commands.registerCommand("mpyWorkbench.runActiveFile", runActiveFile),
-    vscode.commands.registerCommand("mpyWorkbench.checkDiffs", async () => {
-      console.log("[DEBUG] checkDiffs: Starting diff check with tree cache");
-
-      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-
-      // Helper to convert local relative path to absolute path on board
-      const toDevicePath = (localRel: string) => {
-        console.log(`[DEBUG] checkDiffs: Converting local path ${localRel} to device path with rootPath ${rootPath}`);
-
-        // Normalize paths
-        const normalizedLocalPath = localRel.replace(/\/+/g, '/').replace(/\/$/, '');
-        const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
-
-        console.log(`[DEBUG] checkDiffs: Normalized paths - local: ${normalizedLocalPath}, root: ${normalizedRootPath}`);
-
-        // If root is just "/", add leading slash to local path
-        if (normalizedRootPath === "") {
-          const result = "/" + normalizedLocalPath;
-          console.log(`[DEBUG] checkDiffs: Root is /, result: ${result}`);
-          return result;
-        }
-
-        // If local path is empty, return root path
-        if (normalizedLocalPath === "") {
-          console.log(`[DEBUG] checkDiffs: Local path is empty, result: ${normalizedRootPath}`);
-          return normalizedRootPath;
-        }
-
-        // Combine root and local path
-        const result = normalizedRootPath + "/" + normalizedLocalPath;
-        console.log(`[DEBUG] checkDiffs: Combined paths, result: ${result}`);
-        return result;
-      };
-
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: "Checking file differences...",
-        cancellable: false
-      }, async (progress) => {
-        const ws = vscode.workspace.workspaceFolders?.[0];
-        if (!ws) {
-          vscode.window.showErrorMessage("No workspace folder open");
-          return;
-        }
-
-        // Check if workspace is initialized for sync
-        const initialized = await isLocalSyncInitialized();
-        if (!initialized) {
-          const initialize = await vscode.window.showWarningMessage(
-            "The local folder is not initialized for synchronization. Would you like to initialize it now?",
-            { modal: true },
-            "Initialize"
-          );
-          if (initialize !== "Initialize") return;
-
-          // Create initial manifest to initialize sync
-          await ensureRootIgnoreFile(ws.uri.fsPath);
-          await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
-          const matcher = await createIgnoreMatcher(ws.uri.fsPath);
-          const initialManifest = await buildManifest(ws.uri.fsPath, matcher);
-          const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
-          await saveManifest(manifestPath, initialManifest);
-          vscode.window.showInformationMessage("Local folder initialized for synchronization.");
-        }
-
-        progress.report({ message: "Reading local files..." });
-
-        // Apply ignore/filters locally before comparing
-        const matcher = await createIgnoreMatcher(ws.uri.fsPath);
-        const localManifest = await buildManifest(ws.uri.fsPath, matcher);
-        const localFiles = Object.keys(localManifest.files);
-
-        console.log(`[DEBUG] checkDiffs: Found ${localFiles.length} local files`);
-
-        progress.report({ message: "Reading board files from cache..." });
-
-        // Clear cache first to ensure fresh data
-        console.log(`[DEBUG] checkDiffs: Clearing file tree cache before reading...`);
-        await mp.refreshFileTreeCache();
-
-        // Get device files from cache (much faster!)
-        const deviceStats = await mp.listTreeStats(rootPath); // This now uses cache
-        const deviceFiles = deviceStats.filter(e => !e.isDir);
-
-        console.log(`[DEBUG] checkDiffs: Found ${deviceFiles.length} device files from cache`);
-
-        // Helper to convert device path to local relative
-        const relFromDevice = (devicePath: string) => {
-          console.log(`[DEBUG] checkDiffs: Converting device path ${devicePath} with rootPath ${rootPath}`);
-
-          // Normalize paths to ensure consistent comparison
-          const normalizedDevicePath = devicePath.replace(/\/+/g, '/').replace(/\/$/, '');
-          const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
-
-          console.log(`[DEBUG] checkDiffs: Normalized paths - device: ${normalizedDevicePath}, root: ${normalizedRootPath}`);
-
-          // If root is just "/", remove leading slash from device path
-          if (normalizedRootPath === "") {
-            const result = normalizedDevicePath.replace(/^\//, "");
-            console.log(`[DEBUG] checkDiffs: Root is /, result: ${result}`);
-            return result;
-          }
-
-          // If device path starts with root path, remove the root prefix
-          if (normalizedDevicePath.startsWith(normalizedRootPath + "/")) {
-            const result = normalizedDevicePath.slice(normalizedRootPath.length + 1);
-            console.log(`[DEBUG] checkDiffs: Path starts with root, result: ${result}`);
-            return result;
-          }
-
-          // If device path equals root path, return empty string
-          if (normalizedDevicePath === normalizedRootPath) {
-            console.log(`[DEBUG] checkDiffs: Path equals root, result: ""`);
-            return "";
-          }
-
-          // Fallback: remove leading slash if present
-          const result = normalizedDevicePath.replace(/^\//, "");
-          console.log(`[DEBUG] checkDiffs: Fallback, result: ${result}`);
-          return result;
-        };
-
-        // Apply ignore rules to device files
-        const deviceFilesFiltered = deviceFiles.filter(f => {
-          const rel = relFromDevice(f.path);
-          const shouldIgnore = matcher(rel, false);
-          console.log(`[DEBUG] checkDiffs: Device file ${f.path} -> local relative: ${rel}, ignored: ${shouldIgnore}`);
-          return !shouldIgnore;
-        });
-
-        console.log(`[DEBUG] checkDiffs: After filtering: ${deviceFilesFiltered.length} device files`);
-
-        const deviceFileMap = new Map(deviceFilesFiltered.map(f => [relFromDevice(f.path), f]));
-        const diffSet = new Set<string>();
-        const localOnlySet = new Set<string>();
-
-        console.log(`[DEBUG] checkDiffs: Device file map keys:`, Array.from(deviceFileMap.keys()));
-        console.log(`[DEBUG] checkDiffs: Local files:`, localFiles);
-
-        // Show detailed comparison summary
-        console.log(`[DEBUG] checkDiffs: === COMPARISON SUMMARY ===`);
-        console.log(`[DEBUG] checkDiffs: Total local files: ${localFiles.length}`);
-        console.log(`[DEBUG] checkDiffs: Total device files: ${deviceFilesFiltered.length}`);
-        console.log(`[DEBUG] checkDiffs: Device file paths:`, deviceFilesFiltered.map(f => f.path));
-        console.log(`[DEBUG] checkDiffs: Device file keys (converted):`, Array.from(deviceFileMap.keys()));
-        console.log(`[DEBUG] checkDiffs: ========================`);
-
-        // Debug: Show first few device files with their converted paths
-        console.log(`[DEBUG] checkDiffs: First 10 device files with conversions:`);
-        deviceFilesFiltered.slice(0, 10).forEach(f => {
-          const rel = relFromDevice(f.path);
-          console.log(`[DEBUG] checkDiffs: Device: ${f.path} -> Local: ${rel}`);
-        });
-
-        progress.report({ message: "Comparing files..." });
-
-        // Compare local files with device files
-        console.log(`[DEBUG] checkDiffs: Starting comparison of ${localFiles.length} local files with ${deviceFilesFiltered.length} device files`);
-
-        for (const localRel of localFiles) {
-          const deviceFile = deviceFileMap.get(localRel);
-          const abs = path.join(ws.uri.fsPath, ...localRel.split('/'));
-          const devicePath = toDevicePath(localRel);
-
-          console.log(`[DIFF-LOG] Local path: ${abs}`);
-          console.log(`[DIFF-LOG] Board path searched: ${devicePath}`);
-          console.log(`[DIFF-LOG] Device file found: ${!!deviceFile}`);
-
-          if (deviceFile) {
-            console.log(`[DIFF-LOG] Result: MATCH FOUND - Local: ${localRel} -> Device: ${deviceFile.path}`);
-            try {
-              const st = await fs.stat(abs);
-              // Consider files the same if sizes match (ignore mtime skew on device)
-              const same = st.size === deviceFile.size;
-              console.log(`[DIFF-LOG] Size comparison: local=${st.size} bytes, device=${deviceFile.size} bytes, same=${same}`);
-              if (!same) {
-                diffSet.add(deviceFile.path);
-                console.log(`[DIFF-LOG] Result: SIZE MISMATCH - File marked for sync`);
-              } else {
-                console.log(`[DIFF-LOG] Result: FILES IDENTICAL - No action needed`);
-              }
-            } catch (error) {
-              // Local file not accessible
-              diffSet.add(deviceFile.path);
-              console.log(`[DIFF-LOG] Result: LOCAL FILE NOT ACCESSIBLE - Error: ${error}`);
-            }
-          } else {
-            console.log(`[DIFF-LOG] Result: FILE MISSING ON BOARD - Will be marked as local-only`);
-            localOnlySet.add(devicePath);
-          }
-          console.log(`[DIFF-LOG] ---`);
-        }
-
-        // Files on board that don't exist locally
-        for (const [rel, deviceFile] of deviceFileMap.entries()) {
-          if (!localFiles.includes(rel)) {
-            const localPath = path.join(ws.uri.fsPath, ...rel.split('/'));
-            console.log(`[DIFF-LOG] Local path: ${localPath} (expected)`);
-            console.log(`[DIFF-LOG] Board path: ${deviceFile.path}`);
-            console.log(`[DIFF-LOG] Result: FILE MISSING LOCALLY - Will be marked for sync`);
-            console.log(`[DIFF-LOG] ---`);
-            diffSet.add(deviceFile.path);
-          }
-        }
-
-        progress.report({ message: "Checking local-only files..." });
-
-        // Files that exist locally but not on board
-        for (const localRel of localFiles) {
-          const deviceFile = deviceFileMap.get(localRel);
-          if (!deviceFile) {
-            const abs = path.join(ws.uri.fsPath, ...localRel.split('/'));
-            const devicePath = toDevicePath(localRel);
-            console.log(`[DIFF-LOG] Local path: ${abs}`);
-            console.log(`[DIFF-LOG] Board path: ${devicePath} (expected)`);
-            console.log(`[DIFF-LOG] Result: FILE MISSING ON BOARD - Will be marked as local-only`);
-            console.log(`[DIFF-LOG] ---`);
-            localOnlySet.add(devicePath);
-          }
-        }
-
-        progress.report({ message: "Processing differences..." });
-
-        // Keep original sets for sync operations (files only)
-        const originalDiffSet = new Set(diffSet);
-        const originalLocalOnlySet = new Set(localOnlySet);
-
-        // Mark parent dirs for any differing children (for decorations only)
-        const parents = new Set<string>();
-        for (const p of diffSet) {
-          let cur = p;
-          while (cur.includes('/')) {
-            cur = cur.substring(0, cur.lastIndexOf('/')) || '/';
-            parents.add(cur);
-            if (cur === '/' || cur === rootPath) break;
-          }
-        }
-        for (const d of parents) diffSet.add(d);
-
-        // Mark parent dirs for local-only files too
-        for (const p of localOnlySet) {
-          let cur = p;
-          while (cur.includes('/')) {
-            cur = cur.substring(0, cur.lastIndexOf('/')) || '/';
-            parents.add(cur);
-            if (cur === '/' || cur === rootPath) break;
-          }
-        }
-        for (const d of parents) localOnlySet.add(d);
-
-        // Set decorations with parent directories included
-        decorations.setDiffs(diffSet);
-        decorations.setLocalOnly(localOnlySet);
-
-        // Store original file-only sets for sync operations
-        (decorations as any)._originalDiffs = originalDiffSet;
-        (decorations as any)._originalLocalOnly = originalLocalOnlySet;
-
-        // Debug: Log what was found
-        console.log("Debug - checkDiffs results:");
-        console.log("- diffSet:", Array.from(diffSet));
-        console.log("- localOnlySet:", Array.from(localOnlySet));
-        console.log("- deviceFiles count:", deviceFiles.length, "(filtered:", deviceFilesFiltered.length, ")");
-        console.log("- localManifest files count:", Object.keys(localManifest.files).length);
-
-        // Refresh the tree view to show local-only files
-        tree.refreshTree();
-
-        const changedFilesCount = (decorations as any)._originalDiffs ? (decorations as any)._originalDiffs.size : Array.from(diffSet).filter(p => !p.endsWith('/')).length;
-        const localOnlyFilesCount = (decorations as any)._originalLocalOnly ? (decorations as any)._originalLocalOnly.size : Array.from(localOnlySet).filter(p => !p.endsWith('/')).length;
-        const totalFilesFlagged = changedFilesCount + localOnlyFilesCount;
-
-        vscode.window.showInformationMessage(
-          `Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only, ${totalFilesFlagged} total files)`
-        );
-      });
-    }),
+    vscode.commands.registerCommand("mpyWorkbench.checkDiffs", () => boardOperations.checkDiffs()),
     vscode.commands.registerCommand("mpyWorkbench.syncDiffsLocalToBoard", async () => {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }

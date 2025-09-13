@@ -12,6 +12,7 @@ exports.isReplOpen = isReplOpen;
 exports.closeReplTerminal = closeReplTerminal;
 exports.openReplTerminal = openReplTerminal;
 exports.toLocalRelative = toLocalRelative;
+exports.toDevicePath = toDevicePath;
 const vscode = require("vscode");
 const node_child_process_1 = require("node:child_process");
 const mp = require("./mpremote");
@@ -309,5 +310,11 @@ function toLocalRelative(devicePath, rootPath) {
         return "";
     // Fallback: strip leading slash
     return devicePath.replace(/^\//, "");
+}
+function toDevicePath(localRel, rootPath) {
+    const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
+    if (normRoot === "/")
+        return "/" + localRel;
+    return normRoot + "/" + localRel;
 }
 //# sourceMappingURL=mpremoteCommands.js.map

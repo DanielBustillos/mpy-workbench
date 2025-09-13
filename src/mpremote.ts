@@ -13,6 +13,7 @@ export async function mvOnDevice(src: string, dst: string): Promise<void> {
 import { execFile, ChildProcess, exec } from "node:child_process";
 import * as vscode from "vscode";
 import * as path from "node:path";
+import * as fs from "node:fs";
 
 function normalizeConnect(c: string): string {
   if (c.startsWith("serial://")) return c.replace(/^serial:\/\//, "");
@@ -210,6 +211,26 @@ async function populateFileTreeCache(): Promise<void> {
     // Parse into hierarchical structure
     const parsedLines = parseTreeLines(String(stdout || ""));
     console.log(`[DEBUG] populateFileTreeCache: Parsed ${parsedLines.length} lines:`, parsedLines.map(l => `${l.fullPath} (depth: ${l.depth})`));
+
+    // Save parsed paths to file in .mpy-workbench
+    try {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (workspaceFolder) {
+        const workbenchDir = path.join(workspaceFolder.uri.fsPath, '.mpy-workbench');
+        const filePath = path.join(workbenchDir, 'tree-paths.json');
+
+        // Ensure .mpy-workbench directory exists
+        if (!fs.existsSync(workbenchDir)) {
+          fs.mkdirSync(workbenchDir, { recursive: true });
+        }
+
+        // Save the parsed paths as JSON
+        fs.writeFileSync(filePath, JSON.stringify(parsedLines, null, 2));
+        console.log(`[DEBUG] Saved ${parsedLines.length} parsed paths to ${filePath}`);
+      }
+    } catch (error) {
+      console.error(`[DEBUG] Failed to save parsed paths:`, error);
+    }
 
     const treeRoot = buildTreeFromParsedLines(parsedLines);
     console.log(`[DEBUG] populateFileTreeCache: Built tree with ${treeRoot.children.length} root children`);
@@ -1059,6 +1080,50 @@ export async function listTreeStats(root: string): Promise<Array<{ path: string;
   const connection = connectionManager.getConnection(connect);
 
   try {
+    // First try to use the cached tree-paths.json file
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      const treePathsFile = path.join(workspaceFolder.uri.fsPath, '.mpy-workbench', 'tree-paths.json');
+
+      try {
+        // Check if file exists and is recent (within 30 seconds)
+        const stats = fs.statSync(treePathsFile);
+        const now = Date.now();
+        const fileAge = now - stats.mtime.getTime();
+
+        if (fileAge < 30000) { // 30 seconds
+          console.log(`[DEBUG] listTreeStats: Using cached tree-paths.json (age: ${fileAge}ms)`);
+
+          // Read and parse the cached file
+          const cachedData = JSON.parse(fs.readFileSync(treePathsFile, 'utf8'));
+
+          // Convert parsed lines to the expected format
+          const result: Array<{ path: string; isDir: boolean; size: number; mtime: number }> = [];
+
+          for (const item of cachedData) {
+            // For now, use default values for size and mtime since we don't have them in the cached data
+            // In a future enhancement, we could store this information too
+            result.push({
+              path: item.fullPath,
+              isDir: item.isDir,
+              size: 0, // Default size
+              mtime: Date.now() / 1000 // Current time as fallback
+            });
+          }
+
+          console.log(`[DEBUG] listTreeStats: Loaded ${result.length} items from cache`);
+          return result;
+        } else {
+          console.log(`[DEBUG] listTreeStats: Cached file too old (${fileAge}ms), refreshing...`);
+        }
+      } catch (cacheError) {
+        console.log(`[DEBUG] listTreeStats: Could not read cached file:`, cacheError);
+      }
+    }
+
+    // Fallback to original method if cache is not available or too old
+    console.log(`[DEBUG] listTreeStats: Using original mpremote fs tree method`);
+
     // Use mpremote fs tree command to get hierarchical file listing
     const rootArg = root && root !== "/" ? root : "";
     const { stdout } = await runMpremote(["connect", connect, "fs", "tree"].concat(rootArg ? [rootArg] : []), { retryOnFailure: true });

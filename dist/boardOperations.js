@@ -4,6 +4,7 @@ exports.BoardOperations = void 0;
 const vscode = require("vscode");
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const node_child_process_1 = require("node:child_process");
 const mp = require("./mpremote");
 const sync_1 = require("./sync");
 // Helper to get workspace folder or throw error
@@ -454,9 +455,126 @@ class BoardOperations {
         this.decorations.clear();
         this.tree.refreshTree();
     }
+    async generateComparisonPlan(rootPath) {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (!ws)
+            return;
+        console.log("[DEBUG] checkDiffs: Generating comparison plan file...");
+        try {
+            // Get local files
+            const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
+            const localManifest = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher);
+            const localFiles = Object.keys(localManifest.files);
+            // Get device files
+            await mp.refreshFileTreeCache();
+            const deviceStats = await mp.listTreeStats(rootPath);
+            const deviceFiles = deviceStats.filter(e => !e.isDir);
+            // Apply ignore rules to device files
+            const deviceFilesFiltered = deviceFiles.filter(f => {
+                const rel = this.relFromDevice(f.path, rootPath);
+                const shouldIgnore = matcher(rel, false);
+                return !shouldIgnore;
+            });
+            const deviceFileMap = new Map(deviceFilesFiltered.map(f => [this.relFromDevice(f.path, rootPath), f]));
+            // Generate comparison plan
+            const comparisonPlan = {
+                timestamp: new Date().toISOString(),
+                workspace: ws.uri.fsPath,
+                rootPath: rootPath,
+                summary: {
+                    localFilesCount: localFiles.length,
+                    deviceFilesCount: deviceFilesFiltered.length,
+                    totalComparisons: localFiles.length + deviceFilesFiltered.length
+                },
+                comparisons: []
+            };
+            // Files that exist locally - will be compared
+            for (const localRel of localFiles) {
+                const deviceFile = deviceFileMap.get(localRel);
+                const absLocalPath = path.join(ws.uri.fsPath, ...localRel.split('/'));
+                if (deviceFile) {
+                    // File exists in both places - will be compared
+                    comparisonPlan.comparisons.push({
+                        type: "comparison",
+                        localPath: absLocalPath,
+                        localRelative: localRel,
+                        boardPath: deviceFile.path,
+                        expectedAction: "compare_sizes",
+                        status: "will_compare"
+                    });
+                }
+                else {
+                    // File exists locally but not on board
+                    const devicePath = this.toDevicePath(localRel, rootPath);
+                    comparisonPlan.comparisons.push({
+                        type: "local_only",
+                        localPath: absLocalPath,
+                        localRelative: localRel,
+                        boardPath: devicePath,
+                        expectedAction: "mark_as_local_only",
+                        status: "will_add_to_local_only"
+                    });
+                }
+            }
+            // Files that exist on board but not locally
+            for (const [rel, deviceFile] of deviceFileMap.entries()) {
+                if (!localFiles.includes(rel)) {
+                    const absLocalPath = path.join(ws.uri.fsPath, ...rel.split('/'));
+                    comparisonPlan.comparisons.push({
+                        type: "board_only",
+                        localPath: absLocalPath,
+                        localRelative: rel,
+                        boardPath: deviceFile.path,
+                        expectedAction: "mark_as_different",
+                        status: "will_add_to_differences"
+                    });
+                }
+            }
+            // Save comparison plan to file
+            const planFilePath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, 'comparison_plan.json');
+            await fs.mkdir(path.dirname(planFilePath), { recursive: true });
+            await fs.writeFile(planFilePath, JSON.stringify(comparisonPlan, null, 2), 'utf8');
+            console.log(`[DEBUG] checkDiffs: Comparison plan saved to: ${planFilePath}`);
+            console.log(`[DEBUG] checkDiffs: Plan includes ${comparisonPlan.comparisons.length} file operations`);
+            // Show summary in console
+            const compareCount = comparisonPlan.comparisons.filter(c => c.type === "comparison").length;
+            const localOnlyCount = comparisonPlan.comparisons.filter(c => c.type === "local_only").length;
+            const boardOnlyCount = comparisonPlan.comparisons.filter(c => c.type === "board_only").length;
+            console.log(`[DEBUG] checkDiffs: Plan Summary:`);
+            console.log(`[DEBUG] checkDiffs: - Files to compare: ${compareCount}`);
+            console.log(`[DEBUG] checkDiffs: - Local-only files: ${localOnlyCount}`);
+            console.log(`[DEBUG] checkDiffs: - Board-only files: ${boardOnlyCount}`);
+        }
+        catch (error) {
+            console.error(`[DEBUG] checkDiffs: Failed to generate comparison plan: ${error.message}`);
+        }
+    }
+    relFromDevice(devicePath, rootPath) {
+        const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
+        if (normRoot === "/")
+            return devicePath.replace(/^\//, "");
+        if (devicePath.startsWith(normRoot + "/"))
+            return devicePath.slice(normRoot.length + 1);
+        if (devicePath === normRoot)
+            return "";
+        return devicePath.replace(/^\//, "");
+    }
+    toDevicePath(localRel, rootPath) {
+        const normalizedLocalPath = localRel.replace(/\/+/g, '/').replace(/\/$/, '');
+        const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
+        if (normalizedRootPath === "") {
+            return "/" + normalizedLocalPath;
+        }
+        if (normalizedLocalPath === "") {
+            return normalizedRootPath;
+        }
+        return normalizedRootPath + "/" + normalizedLocalPath;
+    }
     async checkDiffs() {
         console.log("[DEBUG] checkDiffs: Starting diff check with tree cache");
         const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        // Generate comparison plan file before starting
+        await this.generateComparisonPlan(rootPath);
         // Helper to convert local relative path to absolute path on board
         const toDevicePath = (localRel) => {
             console.log(`[DEBUG] checkDiffs: Converting local path ${localRel} to device path with rootPath ${rootPath}`);
@@ -594,33 +712,79 @@ class BoardOperations {
                 if (deviceFile) {
                     try {
                         const st = await fs.stat(abs);
-                        // Consider files the same if sizes match (ignore mtime skew on device)
-                        const same = st.size === deviceFile.size;
-                        console.log(`[DEBUG] checkDiffs: Size comparison for ${localRel}: local=${st.size}, device=${deviceFile.size}, same=${same}`);
-                        if (!same) {
+                        // Obtener SHA256 checksum del archivo local
+                        console.log(`[DEBUG] checkDiffs: Calculating SHA256 for local file: ${abs}`);
+                        const localShaResult = (0, node_child_process_1.execSync)(`shasum -a 256 "${abs}"`, {
+                            encoding: 'utf8',
+                            timeout: 10000
+                        });
+                        const localShaMatch = localShaResult.trim().match(/^([a-f0-9]{64})\s+/);
+                        const localSha256 = localShaMatch ? localShaMatch[1] : null;
+                        // Obtener SHA256 checksum del archivo en el board usando solo fs sha256sum
+                        console.log(`[DEBUG] checkDiffs: Getting SHA256 from board for: ${deviceFile.path}`);
+                        let boardSha256 = null;
+                        try {
+                            const boardShaResult = (0, node_child_process_1.execSync)(`mpremote connect auto fs sha256sum "${deviceFile.path}"`, {
+                                encoding: 'utf8',
+                                timeout: 15000
+                            });
+                            // Parsear la salida de mpremote fs sha256sum
+                            // Formato: "sha256sum :filename\nhash_value"
+                            const shaLines = boardShaResult.trim().split('\n');
+                            for (const line of shaLines) {
+                                if (!line.includes('sha256sum') && line.trim()) {
+                                    // Esta línea debería contener solo el hash
+                                    const hashMatch = line.trim().match(/^([a-f0-9]{64})$/);
+                                    if (hashMatch) {
+                                        boardSha256 = hashMatch[1];
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        catch (shaError) {
+                            console.log(`[DEBUG] checkDiffs: Could not get SHA256 from board: ${shaError.message}`);
+                        }
+                        console.log(`[DEBUG] checkDiffs: COMPARING - Local path: ${abs}, Board path: ${deviceFile.path}`);
+                        console.log(`[DEBUG] checkDiffs: SHA256 comparison: local=${localSha256}, device=${boardSha256}, same=${localSha256 && boardSha256 ? localSha256 === boardSha256 : 'N/A'}`);
+                        // Comparar usando SHA256 si está disponible
+                        let filesAreSame = false;
+                        if (localSha256 && boardSha256) {
+                            filesAreSame = localSha256 === boardSha256;
+                            console.log(`[DEBUG] checkDiffs: RESULT - SHA256 ${filesAreSame ? 'MATCH' : 'MISMATCH'}: ${localRel}`);
+                        }
+                        else {
+                            // Si no se pueden obtener checksums, marcar como diferentes para forzar sync
+                            filesAreSame = false;
+                            console.log(`[DEBUG] checkDiffs: RESULT - CANNOT COMPARE (missing SHA256): ${localRel}`);
+                        }
+                        if (!filesAreSame) {
                             diffSet.add(deviceFile.path);
-                            console.log(`[DEBUG] checkDiffs: Size mismatch for ${localRel}: local=${st.size}, device=${deviceFile.size}`);
+                            console.log(`[DEBUG] checkDiffs: MARKED FOR SYNC - ${localRel}`);
+                        }
+                        else {
+                            console.log(`[DEBUG] checkDiffs: FILES IDENTICAL - ${localRel}`);
                         }
                     }
                     catch (error) {
                         // Local file not accessible
                         diffSet.add(deviceFile.path);
-                        console.log(`[DEBUG] checkDiffs: Local file not accessible: ${localRel}, error: ${error}`);
+                        console.log(`[DEBUG] checkDiffs: ERROR - Local file not accessible: ${abs}, error: ${error}`);
                     }
                 }
                 else {
-                    console.log(`[DEBUG] checkDiffs: Local file not on device: ${localRel} - THIS IS THE PROBLEM!`);
+                    console.log(`[DEBUG] checkDiffs: MISSING - Local file exists but not on board: ${abs}`);
                     // This is where the "exists locally but not on board" error comes from
-                    const devicePath = toDevicePath(localRel);
+                    const devicePath = this.toDevicePath(localRel, rootPath);
                     localOnlySet.add(devicePath);
-                    console.log(`[DEBUG] checkDiffs: Added to localOnlySet: ${devicePath}`);
+                    console.log(`[DEBUG] checkDiffs: ADDED TO LOCAL-ONLY: ${devicePath}`);
                 }
             }
             // Files on board that don't exist locally
             for (const [rel, deviceFile] of deviceFileMap.entries()) {
                 if (!localFiles.includes(rel)) {
                     diffSet.add(deviceFile.path);
-                    console.log(`[DEBUG] checkDiffs: Device file not local: ${rel} -> ${deviceFile.path}`);
+                    console.log(`[DEBUG] checkDiffs: BOARD-ONLY - File exists on board but not locally: ${deviceFile.path} (local equivalent would be: ${rel})`);
                 }
             }
             progress.report({ message: "Checking local-only files..." });
@@ -629,8 +793,9 @@ class BoardOperations {
                 const deviceFile = deviceFileMap.get(localRel);
                 if (!deviceFile) {
                     const devicePath = toDevicePath(localRel);
+                    const absLocalPath = path.join(ws.uri.fsPath, ...localRel.split('/'));
                     localOnlySet.add(devicePath);
-                    console.log(`[DEBUG] checkDiffs: Local-only file: ${localRel} -> ${devicePath}`);
+                    console.log(`[DEBUG] checkDiffs: LOCAL-ONLY - File exists locally but not on board: ${absLocalPath} -> ${devicePath}`);
                 }
             }
             progress.report({ message: "Processing differences..." });
@@ -860,7 +1025,7 @@ class BoardOperations {
         }
         else {
             // Fallback: no workspace, use temp
-            const temp = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri.fsPath, node.path.replace(/\//g, "_"));
+            const temp = vscode.Uri.joinPath(vscode.Uri.file(vscode.workspace.workspaceFolders[0].uri.fsPath), node.path.replace(/\//g, "_"));
             await fs.mkdir(path.dirname(temp.fsPath), { recursive: true });
             await this.withAutoSuspend(() => mp.cpFromDevice(node.path, temp.fsPath));
             const doc = await vscode.workspace.openTextDocument(temp);
@@ -898,6 +1063,8 @@ class BoardOperations {
                 this.tree.removeNode(node.path);
             }
             catch (err) {
+                progress.report({ increment: 100, message: "Deletion failed!" });
+                vscode.window.showErrorMessage(`Failed to delete ${node.path} from board: ${err?.message ?? String(err)}`);
             }
         });
     }

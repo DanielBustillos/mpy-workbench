@@ -286,3 +286,9 @@ export function toLocalRelative(devicePath: string, rootPath: string): string {
   // Fallback: strip leading slash
   return devicePath.replace(/^\//, "");
 }
+
+export function toDevicePath(localRel: string, rootPath: string): string {
+  const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
+  if (normRoot === "/") return "/" + localRel;
+  return normRoot + "/" + localRel;
+}
