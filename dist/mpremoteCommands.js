@@ -145,8 +145,10 @@ async function softReset() {
             // fall back to mpremote below
         }
     }
-    // Use mpremote connect auto reset
-    const cmd = `mpremote connect auto reset`;
+    // Use mpremote connect with explicit port
+    const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
+    const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
+    const cmd = `mpremote connect ${device} reset`;
     await new Promise((resolve) => {
         (0, node_child_process_1.exec)(cmd, (error, stdout, stderr) => {
             if (error) {

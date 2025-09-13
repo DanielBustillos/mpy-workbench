@@ -128,33 +128,8 @@ function activate(context) {
             '# MPY Workbench',
             '.mpy-workbench/',
             '/.mpy-workbench',
-            '.mpyignore',
             ''
         ].join('\n');
-    }
-    // Ensure a root-level .mpyignore exists with sensible defaults
-    async function ensureRootIgnoreFile(wsPath) {
-        const ignorePath = path.join(wsPath, '.mpyignore');
-        try {
-            // If exists, upgrade only if it's the placeholder header with no rules
-            const txt = await fs.readFile(ignorePath, 'utf8');
-            const nonComment = txt.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-            const hasOldHeader = /Ignore patterns for MPY Workbench/.test(txt);
-            if (hasOldHeader && nonComment.length === 0) {
-                try {
-                    await fs.writeFile(ignorePath, buildDefaultMpyIgnoreContent(), 'utf8');
-                }
-                catch { }
-            }
-            return; // file exists; keep user rules otherwise
-        }
-        catch {
-            // Not exists: create with defaults
-            try {
-                await fs.writeFile(ignorePath, buildDefaultMpyIgnoreContent(), 'utf8');
-            }
-            catch { }
-        }
     }
     async function readWorkspaceConfig(wsPath) {
         try {
@@ -244,7 +219,6 @@ function activate(context) {
     try {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (ws) {
-            ensureRootIgnoreFile(ws.uri.fsPath).catch(() => { });
             ensureWorkbenchIgnoreFile(ws.uri.fsPath).catch(() => { });
         }
     }
@@ -320,7 +294,6 @@ function activate(context) {
                 return;
             }
             // Ensure directories exist
-            await ensureRootIgnoreFile(ws.uri.fsPath);
             await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
             // Rebuild manifest
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
@@ -411,9 +384,15 @@ function activate(context) {
                     vscode.window.showInformationMessage(`File saved (ignored for upload): ${filename}`);
                 }
                 else {
-                    await withAutoSuspend(() => mp.cpToDevice(abs, devicePath));
-                    vscode.window.showInformationMessage(`File saved locally and uploaded to board: ${filename}`);
-                    tree.addNode(devicePath, false);
+                    try {
+                        await withAutoSuspend(() => mp.cpToDevice(abs, devicePath));
+                        vscode.window.showInformationMessage(`File saved locally and uploaded to board: ${filename}`);
+                        tree.addNode(devicePath, false);
+                    }
+                    catch (uploadError) {
+                        console.error(`[DEBUG] Failed to upload new file to board:`, uploadError);
+                        vscode.window.showWarningMessage(`File saved locally but upload to board failed: ${uploadError?.message || uploadError}`);
+                    }
                 }
             }
             catch (err) {
@@ -505,7 +484,6 @@ function activate(context) {
                 if (initialize !== "Initialize")
                     return;
                 // Create initial manifest to initialize sync
-                await ensureRootIgnoreFile(ws.uri.fsPath);
                 await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
                 const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
                 const initialManifest = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher);
@@ -698,7 +676,8 @@ function activate(context) {
                                 message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
                             });
                             // Use individual cp command instead of bulk
-                            const cpArgs = ["connect", "auto", "cp", localPath, `:${devicePath}`];
+                            const devicePathWithPrefix = devicePath === "/" ? ":" : `:${devicePath}`;
+                            const cpArgs = ["connect", "auto", "fs", "cp", localPath, devicePathWithPrefix];
                             console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
                             await (0, mpremote_1.runMpremote)(cpArgs, { retryOnFailure: true });
                             tree.addNode(devicePath, false); // Add file to tree
@@ -823,10 +802,16 @@ function activate(context) {
         }
         const dest = "/" + rel.replace(/\\\\/g, "/");
         // Use replacing upload to avoid partial writes while code may autostart
-        await withAutoSuspend(() => mp.uploadReplacing(ed.document.uri.fsPath, dest));
-        tree.addNode(dest, false);
-        vscode.window.showInformationMessage(`Uploaded to ${dest}`);
-        tree.refreshTree();
+        try {
+            await withAutoSuspend(() => mp.uploadReplacing(ed.document.uri.fsPath, dest));
+            tree.addNode(dest, false);
+            vscode.window.showInformationMessage(`Uploaded to ${dest}`);
+            tree.refreshTree();
+        }
+        catch (uploadError) {
+            console.error(`[DEBUG] Failed to upload active file to board:`, uploadError);
+            vscode.window.showErrorMessage(`Failed to upload active file to board: ${uploadError?.message || uploadError}`);
+        }
     }), vscode.commands.registerCommand("mpyWorkbench.runActiveFile", mpremoteCommands_1.runActiveFile), vscode.commands.registerCommand("mpyWorkbench.checkDiffs", () => boardOperations.checkDiffs()), vscode.commands.registerCommand("mpyWorkbench.syncDiffsLocalToBoard", async () => {
         const ws = vscode.workspace.workspaceFolders?.[0];
         if (!ws) {
@@ -839,7 +824,6 @@ function activate(context) {
             if (initialize !== "Initialize")
                 return;
             // Create initial manifest to initialize sync
-            await ensureRootIgnoreFile(ws.uri.fsPath);
             await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
             const initialManifest = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher);
@@ -930,7 +914,6 @@ function activate(context) {
             if (initialize !== "Initialize")
                 return;
             // Create initial manifest to initialize sync
-            await ensureRootIgnoreFile(ws2.uri.fsPath);
             await ensureWorkbenchIgnoreFile(ws2.uri.fsPath);
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws2.uri.fsPath);
             const initialManifest = await (0, sync_1.buildManifest)(ws2.uri.fsPath, matcher);
@@ -991,11 +974,21 @@ function activate(context) {
             const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
             await fs.mkdir(path.dirname(abs), { recursive: true });
             // If not present locally, fetch from device to local path
-            try {
-                await fs.access(abs);
+            const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
+            if (!fileExistsLocally) {
+                console.log(`[DEBUG] openFile (extension): File not found locally, copying from board: ${node.path} -> ${abs}`);
+                try {
+                    await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+                    console.log(`[DEBUG] openFile (extension): Successfully copied file from board`);
+                }
+                catch (copyError) {
+                    console.error(`[DEBUG] openFile (extension): Failed to copy file from board:`, copyError);
+                    vscode.window.showErrorMessage(`Failed to copy file from board: ${copyError?.message || copyError}`);
+                    return; // Don't try to open the file if copy failed
+                }
             }
-            catch {
-                await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+            else {
+                console.log(`[DEBUG] openFile (extension): File already exists locally: ${abs}`);
             }
             const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
             await vscode.window.showTextDocument(doc, { preview: false });
@@ -1005,10 +998,16 @@ function activate(context) {
             // Fallback: no workspace, use temp
             const temp = vscode.Uri.joinPath(context.globalStorageUri, node.path.replace(/\//g, "_"));
             await fs.mkdir(path.dirname(temp.fsPath), { recursive: true });
-            await withAutoSuspend(() => mp.cpFromDevice(node.path, temp.fsPath));
-            const doc = await vscode.workspace.openTextDocument(temp);
-            await vscode.window.showTextDocument(doc, { preview: true });
-            await context.workspaceState.update("mpyWorkbench.lastOpenedPath", temp.fsPath);
+            try {
+                await withAutoSuspend(() => mp.cpFromDevice(node.path, temp.fsPath));
+                const doc = await vscode.workspace.openTextDocument(temp);
+                await vscode.window.showTextDocument(doc, { preview: true });
+                await context.workspaceState.update("mpyWorkbench.lastOpenedPath", temp.fsPath);
+            }
+            catch (copyError) {
+                console.error(`[DEBUG] openFile (extension fallback): Failed to copy file to temp location:`, copyError);
+                vscode.window.showErrorMessage(`Failed to copy file from board to temp location: ${copyError?.message || copyError}`);
+            }
         }
     }), vscode.commands.registerCommand("mpyWorkbench.mkdir", async (node) => {
         const base = node?.kind === "dir" ? node.path : (node ? path.posix.dirname(node.path) : "/");
@@ -1166,8 +1165,14 @@ function activate(context) {
             await fs.mkdir(path.dirname(localPath), { recursive: true });
             await fs.writeFile(localPath, "");
             // Upload to board
-            await mp.uploadReplacing(localPath, devicePath);
-            vscode.window.showInformationMessage(`File created: ${devicePath}`);
+            try {
+                await mp.uploadReplacing(localPath, devicePath);
+                vscode.window.showInformationMessage(`File created: ${devicePath}`);
+            }
+            catch (uploadError) {
+                console.error(`[DEBUG] Failed to upload new file to board:`, uploadError);
+                vscode.window.showWarningMessage(`File created locally but upload to board failed: ${uploadError?.message || uploadError}`);
+            }
         }
         catch (err) {
             vscode.window.showErrorMessage(`Error creating file: ${err?.message ?? err}`);
@@ -1277,6 +1282,7 @@ function activate(context) {
             tree.addNode(deviceDest, false);
         }
         catch (e) {
+            console.error(`[DEBUG] Auto-upload failed for ${rel}:`, e);
             vscode.window.showWarningMessage(`Board auto-upload failed for ${rel}: ${String(e?.message ?? e)}`);
         }
     }), vscode.window.onDidCloseTerminal((terminal) => {

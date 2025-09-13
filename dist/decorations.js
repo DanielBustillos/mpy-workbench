@@ -6,8 +6,9 @@ class Esp32DecorationProvider {
     constructor() {
         this._onDidChange = new vscode.EventEmitter();
         this.onDidChangeFileDecorations = this._onDidChange.event;
-        this.diffSet = new Set(); // device absolute paths like /code/main.py and dirs
+        this.diffSet = new Set(); // device absolute paths like /code/main.py and dirs (changed files)
         this.localOnlySet = new Set(); // device paths for files that exist locally but not on board
+        this.boardOnlySet = new Set(); // device paths for files that exist on board but not locally
     }
     setDiffs(paths) {
         this.diffSet = new Set(paths);
@@ -17,11 +18,17 @@ class Esp32DecorationProvider {
         this.localOnlySet = new Set(paths);
         this._onDidChange.fire(undefined);
     }
+    setBoardOnly(paths) {
+        this.boardOnlySet = new Set(paths);
+        this._onDidChange.fire(undefined);
+    }
     clear() {
         this.diffSet.clear();
         this.localOnlySet.clear();
+        this.boardOnlySet.clear();
         this._originalDiffs = undefined;
         this._originalLocalOnly = undefined;
+        this._originalBoardOnly = undefined;
         this._onDidChange.fire(undefined);
     }
     getDiffs() {
@@ -37,15 +44,24 @@ class Esp32DecorationProvider {
     getLocalOnlyFilesOnly() {
         return Array.from(this._originalLocalOnly || this.localOnlySet);
     }
+    getBoardOnly() {
+        return Array.from(this.boardOnlySet);
+    }
+    getBoardOnlyFilesOnly() {
+        return Array.from(this._originalBoardOnly || this.boardOnlySet);
+    }
     provideFileDecoration(uri) {
         if (uri.scheme !== 'esp32')
             return undefined;
         const p = uri.path; // like /code/main.py
         if (this.localOnlySet.has(p)) {
-            return { badge: '?', tooltip: 'Exists locally but not on board', color: new vscode.ThemeColor('descriptionForeground') };
+            return { badge: '?', tooltip: 'Only in local', color: new vscode.ThemeColor('descriptionForeground') };
+        }
+        if (this.boardOnlySet.has(p)) {
+            return { badge: 'Δ', tooltip: 'Only in board', color: new vscode.ThemeColor('charts.red') };
         }
         if (this.diffSet.has(p)) {
-            return { badge: 'Δ', tooltip: 'Differs from local', color: new vscode.ThemeColor('charts.red') };
+            return { badge: 'Δ', tooltip: 'Changed file', color: new vscode.ThemeColor('charts.red') };
         }
         return undefined;
     }

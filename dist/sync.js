@@ -76,8 +76,7 @@ function defaultIgnorePatterns() {
         "build/",
         "__pycache__/",
         ".DS_Store",
-        ".mpy-workbench/",
-        ".mpyignore"
+        ".mpy-workbench/"
     ];
 }
 function globToRegExp(pat) {
@@ -101,18 +100,10 @@ function globToRegExp(pat) {
 async function createIgnoreMatcher(rootDir) {
     const defaults = defaultIgnorePatterns();
     let extra = [];
-    // Read workspace root ignore file
-    try {
-        const txt = await fs.readFile(path.join(rootDir, '.mpyignore'), 'utf8');
-        extra.push(...txt.split(/\r?\n/)
-            .map(l => l.trim())
-            .filter(l => l && !l.startsWith('#')));
-    }
-    catch { }
     // Read workbench-local ignore file inside .mpy-workbench
     try {
-        const txt2 = await fs.readFile(path.join(rootDir, '.mpy-workbench', '.mpyignore'), 'utf8');
-        extra.push(...txt2.split(/\r?\n/)
+        const txt = await fs.readFile(path.join(rootDir, '.mpy-workbench', '.mpyignore'), 'utf8');
+        extra.push(...txt.split(/\r?\n/)
             .map(l => l.trim())
             .filter(l => l && !l.startsWith('#')));
     }

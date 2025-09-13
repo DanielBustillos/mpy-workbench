@@ -18,6 +18,7 @@ exports.deleteFile = deleteFile;
 exports.deleteAny = deleteAny;
 exports.deleteFolderRecursive = deleteFolderRecursive;
 exports.fileExists = fileExists;
+exports.fileExistsSha256 = fileExistsSha256;
 exports.getFileInfo = getFileInfo;
 exports.deleteAllInPath = deleteAllInPath;
 exports.runFile = runFile;
@@ -49,6 +50,13 @@ function normalizeConnect(c) {
         return c.replace(/^serial:\/\//, "");
     if (c.startsWith("serial:/"))
         return c.replace(/^serial:\//, "");
+    // On macOS, add /dev/ prefix if it's missing and looks like a cu.* device
+    if (c.startsWith("cu.") && !c.startsWith("/dev/")) {
+        const normalized = `/dev/${c}`;
+        console.log(`[DEBUG] normalizeConnect: Added /dev/ prefix: ${c} -> ${normalized}`);
+        return normalized;
+    }
+    console.log(`[DEBUG] normalizeConnect: Using as-is: ${c}`);
     return c;
 }
 let currentChild = null;
@@ -195,8 +203,9 @@ const TREE_CACHE_DURATION = 30000; // 30 seconds
 // Populate the global cache with complete file tree
 async function populateFileTreeCache() {
     try {
+        const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
         console.log(`[DEBUG] populateFileTreeCache: Fetching complete file tree`);
-        const { stdout } = await runMpremote(["connect", "auto", "fs", "tree"], { retryOnFailure: true });
+        const { stdout } = await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: true });
         console.log(`[DEBUG] populateFileTreeCache: Raw tree output:\n${stdout}`);
         // Parse into hierarchical structure
         const parsedLines = parseTreeLines(String(stdout || ""));
@@ -292,9 +301,10 @@ async function refreshFileTreeCache() {
 // Debug function to manually test tree parsing
 async function debugTreeParsing() {
     try {
+        const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
         console.log(`[DEBUG] debugTreeParsing: Testing tree command manually`);
         // Get raw tree output
-        const { stdout } = await runMpremote(["connect", "auto", "fs", "tree"], { retryOnFailure: true });
+        const { stdout } = await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: true });
         console.log(`[DEBUG] debugTreeParsing: Raw tree output:\n${stdout}`);
         // Parse it
         const parsedLines = parseTreeLines(String(stdout || ""));
@@ -320,15 +330,16 @@ async function debugTreeParsing() {
 // Debug function to check filesystem status and read-only issues
 async function debugFilesystemStatus() {
     try {
+        const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
         console.log(`[DEBUG] debugFilesystemStatus: Checking filesystem status`);
         // Check root filesystem stat
         console.log(`[DEBUG] debugFilesystemStatus: Checking root filesystem stat...`);
-        const { stdout: statOutput } = await runMpremote(["connect", "auto", "fs", "stat", "/"], { retryOnFailure: false });
+        const { stdout: statOutput } = await runMpremote(["connect", connect, "fs", "stat", "/"], { retryOnFailure: false });
         console.log(`[DEBUG] debugFilesystemStatus: Root filesystem stat:\n${statOutput}`);
         // Try to check mount information
         console.log(`[DEBUG] debugFilesystemStatus: Checking mount information...`);
         try {
-            const { stdout: mountOutput } = await runMpremote(["connect", "auto", "exec", "import os; print(os.listdir('/'))"], { retryOnFailure: false });
+            const { stdout: mountOutput } = await runMpremote(["connect", connect, "exec", "import os; print(os.listdir('/'))"], { retryOnFailure: false });
             console.log(`[DEBUG] debugFilesystemStatus: Root directory listing:\n${mountOutput}`);
         }
         catch (mountError) {
@@ -337,11 +348,11 @@ async function debugFilesystemStatus() {
         // Try to check if we can write to root
         console.log(`[DEBUG] debugFilesystemStatus: Testing write permissions...`);
         try {
-            await runMpremote(["connect", "auto", "exec", "f = open('test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
+            await runMpremote(["connect", connect, "exec", "f = open('test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
             console.log(`[DEBUG] debugFilesystemStatus: ✓ Write test to root succeeded`);
             // Clean up test file
             try {
-                await runMpremote(["connect", "auto", "exec", "import os; os.remove('test_write.tmp')"], { retryOnFailure: false });
+                await runMpremote(["connect", connect, "exec", "import os; os.remove('test_write.tmp')"], { retryOnFailure: false });
                 console.log(`[DEBUG] debugFilesystemStatus: ✓ Test file cleanup succeeded`);
             }
             catch (cleanupError) {
@@ -354,13 +365,13 @@ async function debugFilesystemStatus() {
         // Try to check if we can write to a subdirectory
         console.log(`[DEBUG] debugFilesystemStatus: Testing write permissions in subdirectory...`);
         try {
-            await runMpremote(["connect", "auto", "exec", "import os; os.mkdir('test_dir')"], { retryOnFailure: false });
+            await runMpremote(["connect", connect, "exec", "import os; os.mkdir('test_dir')"], { retryOnFailure: false });
             console.log(`[DEBUG] debugFilesystemStatus: ✓ Directory creation succeeded`);
-            await runMpremote(["connect", "auto", "exec", "f = open('test_dir/test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
+            await runMpremote(["connect", connect, "exec", "f = open('test_dir/test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
             console.log(`[DEBUG] debugFilesystemStatus: ✓ Write test in subdirectory succeeded`);
             // Clean up
             try {
-                await runMpremote(["connect", "auto", "exec", "import os; os.remove('test_dir/test_write.tmp'); os.rmdir('test_dir')"], { retryOnFailure: false });
+                await runMpremote(["connect", connect, "exec", "import os; os.remove('test_dir/test_write.tmp'); os.rmdir('test_dir')"], { retryOnFailure: false });
                 console.log(`[DEBUG] debugFilesystemStatus: ✓ Cleanup succeeded`);
             }
             catch (cleanupError) {
@@ -373,7 +384,7 @@ async function debugFilesystemStatus() {
         // Check MicroPython version and build
         console.log(`[DEBUG] debugFilesystemStatus: Checking MicroPython version...`);
         try {
-            const { stdout: versionOutput } = await runMpremote(["connect", "auto", "exec", "import sys; print('MicroPython version:', sys.version)"], { retryOnFailure: false });
+            const { stdout: versionOutput } = await runMpremote(["connect", connect, "exec", "import sys; print('MicroPython version:', sys.version)"], { retryOnFailure: false });
             console.log(`[DEBUG] debugFilesystemStatus: Version info:\n${versionOutput}`);
         }
         catch (versionError) {
@@ -605,6 +616,7 @@ function parseTreeForPath(treeOutput, targetPath) {
     }
 }
 async function lsTyped(p) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     console.log(`[DEBUG] lsTyped: Getting entries for path ${p}`);
     try {
         // Check if cache needs to be populated or refreshed
@@ -623,7 +635,7 @@ async function lsTyped(p) {
         }
         console.log(`[DEBUG] lsTyped: No cached results for ${p}, trying direct tree parsing`);
         // Fallback: direct tree parsing for this specific path
-        const { stdout } = await runMpremote(["connect", "auto", "fs", "tree"], { retryOnFailure: true });
+        const { stdout } = await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: true });
         const result = parseTreeForPath(String(stdout || ""), p);
         console.log(`[DEBUG] lsTyped: Direct parsing found ${result.length} entries for ${p}`);
         // If still no results, try fs ls as last resort
@@ -631,7 +643,7 @@ async function lsTyped(p) {
             console.log(`[DEBUG] lsTyped: No results from tree parsing, trying fs ls fallback`);
             try {
                 const pathArg = p && p !== "/" ? p : "";
-                const args = ["connect", "auto", "fs", "ls"].concat(pathArg ? [pathArg] : []);
+                const args = ["connect", connect, "fs", "ls"].concat(pathArg ? [pathArg] : []);
                 const { stdout: lsOutput } = await runMpremote(args, { retryOnFailure: true });
                 console.log(`[DEBUG] lsTyped: Fallback ls output:\n${lsOutput}`);
                 // Parse ls output as fallback
@@ -723,13 +735,25 @@ async function cpFromDevice(devicePath, localPath) {
     // Get connection info for optimization
     const connection = connectionManager.getConnection(connect);
     try {
-        const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
-        await runMpremote(["connect", connect, "fs", "cp", deviceArg, localPath], { retryOnFailure: true });
+        // Strip leading slash from device paths for mpremote compatibility
+        // mpremote expects root-level files without leading slash (test_write.tmp vs /test_write.tmp)
+        const deviceArg = devicePath && devicePath !== "/" ? devicePath.replace(/^\//, "") : "/";
+        // For cp FROM device TO local, device path needs : prefix
+        const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
+        const commandArgs = ["connect", connect, "fs", "cp", devicePathWithPrefix, localPath];
+        const command = `mpremote ${commandArgs.map(arg => `"${arg}"`).join(' ')}`;
+        console.log(`[DEBUG] cpFromDevice: Executing command: ${command}`);
+        console.log(`[DEBUG] cpFromDevice: Device path: ${devicePath} -> ${deviceArg} -> ${devicePathWithPrefix}`);
+        await runMpremote(commandArgs, { retryOnFailure: true });
         // Note: We don't clear cache here since we're only reading, not modifying
     }
     catch (error) {
         connectionManager.markUnhealthy(connect);
-        throw error;
+        // Include command and file paths in error message for better debugging
+        const deviceArg = devicePath && devicePath !== "/" ? devicePath.replace(/^\//, "") : "/";
+        const command = `mpremote connect ${connect} fs cp "${deviceArg}" "${localPath}"`;
+        const enhancedError = new Error(`Failed to copy from device: ${error?.message || error}\nCommand: ${command}\nOriginal device path: ${devicePath}\nNormalized device path: ${deviceArg}\nLocal path: ${localPath}`);
+        throw enhancedError;
     }
 }
 async function cpToDevice(localPath, devicePath) {
@@ -740,8 +764,13 @@ async function cpToDevice(localPath, devicePath) {
     const connection = connectionManager.getConnection(connect);
     try {
         const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
-        console.log(`[DEBUG] cpToDevice: Executing mpremote connect ${connect} fs cp "${localPath}" "${deviceArg}"`);
-        await runMpremote(["connect", connect, "fs", "cp", localPath, deviceArg], { retryOnFailure: true });
+        // For cp TO device FROM local, device path needs : prefix
+        const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
+        const commandArgs = ["connect", connect, "fs", "cp", localPath, devicePathWithPrefix];
+        const command = `mpremote ${commandArgs.map(arg => `"${arg}"`).join(' ')}`;
+        console.log(`[DEBUG] cpToDevice: Executing command: ${command}`);
+        console.log(`[DEBUG] cpToDevice: Device path: ${devicePath} -> ${deviceArg} -> ${devicePathWithPrefix}`);
+        await runMpremote(commandArgs, { retryOnFailure: true });
         // Invalidate cache since filesystem changed
         clearFileTreeCache();
     }
@@ -770,7 +799,8 @@ async function cpToDevice(localPath, devicePath) {
                 // Try the upload again after reset
                 console.log(`[DEBUG] cpToDevice: Retrying upload after reset...`);
                 const deviceArgRetry = devicePath && devicePath !== "/" ? devicePath : "/";
-                await runMpremote(["connect", connect, "fs", "cp", localPath, deviceArgRetry], { retryOnFailure: false });
+                const devicePathWithPrefixRetry = deviceArgRetry === "/" ? ":" : `:${deviceArgRetry}`;
+                await runMpremote(["connect", connect, "fs", "cp", localPath, devicePathWithPrefixRetry], { retryOnFailure: false });
                 console.log(`[DEBUG] cpToDevice: Upload succeeded after reset!`);
                 // Invalidate cache since filesystem changed
                 clearFileTreeCache();
@@ -786,7 +816,8 @@ async function cpToDevice(localPath, devicePath) {
                 console.log(`[DEBUG] cpToDevice: Filesystem remount attempted`);
                 // Try upload again
                 const deviceArgRemount = devicePath && devicePath !== "/" ? devicePath : "/";
-                await runMpremote(["connect", connect, "fs", "cp", localPath, deviceArgRemount], { retryOnFailure: false });
+                const devicePathWithPrefixRemount = deviceArgRemount === "/" ? ":" : `:${deviceArgRemount}`;
+                await runMpremote(["connect", connect, "fs", "cp", localPath, devicePathWithPrefixRemount], { retryOnFailure: false });
                 console.log(`[DEBUG] cpToDevice: Upload succeeded after remount!`);
                 // Invalidate cache since filesystem changed
                 clearFileTreeCache();
@@ -818,7 +849,8 @@ async function uploadReplacing(localPath, devicePath) {
     try {
         // For replacing upload, use mpremote fs cp with -f flag to force overwrite
         const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
-        await runMpremote(["connect", connect, "fs", "cp", "-f", localPath, deviceArg], { retryOnFailure: true });
+        const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
+        await runMpremote(["connect", connect, "fs", "cp", "-f", localPath, devicePathWithPrefix], { retryOnFailure: true });
     }
     catch (error) {
         connectionManager.markUnhealthy(connect);
@@ -875,6 +907,43 @@ async function fileExists(p) {
             errorStr.includes("device not configured") ||
             errorStr.includes("connection failed")) {
             console.warn(`Serial connection error during file check: ${errorStr}`);
+            return false;
+        }
+        // For other errors, assume file doesn't exist
+        return false;
+    }
+}
+// Check file existence using sha256sum command (more reliable for detecting missing files)
+async function fileExistsSha256(p) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    try {
+        const pathArg = p && p !== "/" ? p : "/";
+        // Use sha256sum command to check file existence
+        const { stdout } = await runMpremote(["connect", connect, "fs", "sha256sum", pathArg], { retryOnFailure: false });
+        // If we get output, the file exists
+        const output = String(stdout || "").trim();
+        if (output && !output.includes("no such file") && !output.includes("file not found")) {
+            return true;
+        }
+        return false;
+    }
+    catch (error) {
+        const errorStr = String(error?.message || error).toLowerCase();
+        // Check for "file not found" type errors
+        if (errorStr.includes("no such file") ||
+            errorStr.includes("file not found") ||
+            errorStr.includes("does not exist") ||
+            errorStr.includes("mpremote: no device found") ||
+            errorStr.includes("device not found")) {
+            return false;
+        }
+        // Re-throw connection or other serious errors
+        if (errorStr.includes("serialexception") ||
+            errorStr.includes("device not configured") ||
+            errorStr.includes("connection failed")) {
+            console.warn(`Serial connection error during sha256sum file check: ${errorStr}`);
             return false;
         }
         // For other errors, assume file doesn't exist
@@ -1049,17 +1118,18 @@ function cancelAll() {
 // Health check function to verify connection status
 async function healthCheck(port) {
     const startTime = Date.now();
+    const connect = port || normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
     try {
         // Quick health check using fs tree to verify connection
-        await runMpremote(["connect", "auto", "fs", "tree"], { retryOnFailure: false });
+        await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: false });
         const responseTime = Date.now() - startTime;
-        // Mark connection as healthy (using "auto" as the port identifier)
-        connectionManager.markHealthy("auto");
-        return { healthy: true, port: port || "auto", responseTime };
+        // Mark connection as healthy
+        connectionManager.markHealthy(connect);
+        return { healthy: true, port: connect, responseTime };
     }
     catch (error) {
-        connectionManager.markUnhealthy("auto");
-        return { healthy: false, port: port || "auto" };
+        connectionManager.markUnhealthy(connect);
+        return { healthy: false, port: connect };
     }
 }
 // Get connection statistics for debugging/monitoring

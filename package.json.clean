@@ -53,7 +53,7 @@
     },
     "commands": [
       { "command": "mpyWorkbench.refresh", "title": "MPY Workbench: Refresh", "icon": "$(refresh)" },
-      { "command": "mpyWorkbench.openFile", "title": "MPY Workbench: Open File" },
+      { "command": "mpyWorkbench.openFile", "title": "MPY Workbench: Open File from board" },
       { "command": "mpyWorkbench.uploadActiveFile", "title": "MPY Workbench: Upload Active File" },
       { "command": "mpyWorkbench.newFileBoardAndLocal", "title": "MPY Workbench: New File (Board + Local)", "icon": "$(new-file)" },
       { "command": "mpyWorkbench.newFileInTree", "title": "MPY Workbench: New File Here", "icon": "$(new-file)" },
