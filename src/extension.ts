@@ -751,22 +751,10 @@ export function activate(context: vscode.ExtensionContext) {
           });
         });
 
-        // Save manifest locally and on device
+        // Save manifest locally only (no device manifest to avoid .mpy-workbench folder on board)
         const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
         await saveManifest(manifestPath, man);
-        const tmp = path.join(context.globalStorageUri.fsPath, "esp32sync.json");
-        await fs.mkdir(path.dirname(tmp), { recursive: true });
-        await fs.writeFile(tmp, JSON.stringify(man));
-        const deviceManifest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/.mpy-workbench/esp32sync.json";
-
-        try {
-          await withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
-          console.log(`[DEBUG] syncBaseline: ✓ Manifest uploaded to device: ${deviceManifest}`);
-        } catch (manifestError: any) {
-          console.error(`[DEBUG] syncBaseline: ✗ Failed to upload manifest to device:`, manifestError.message);
-          // Don't fail the entire sync if manifest upload fails
-          vscode.window.showWarningMessage(`Manifest upload failed, but file sync completed: ${manifestError.message}`);
-        }
+        console.log(`[DEBUG] syncBaseline: ✓ Manifest saved locally: ${manifestPath}`);
 
         vscode.window.showInformationMessage("Board: Sync all files (Local → Board) completed");
         // Clear any diff/local-only markers after successful sync-all

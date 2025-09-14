@@ -78,7 +78,7 @@ class ConnectionManager {
             return { port, shouldReuse: true };
         }
         // Create new connection entry
-        this.activeConnections.set(port, { lastUsed: now, isHealthy: true });
+        this.activeConnections.set(port, { lastUsed: now, isHealthy: true, operationInProgress: false });
         return { port, shouldReuse: false };
     }
     // Mark connection as unhealthy (after errors)
@@ -94,6 +94,26 @@ class ConnectionManager {
         if (connection) {
             connection.isHealthy = true;
             connection.lastUsed = Date.now();
+            connection.operationInProgress = false; // Operation completed
+        }
+    }
+    // Mark operation as started (to prevent concurrent operations)
+    markOperationStarted(port) {
+        const connection = this.activeConnections.get(port);
+        if (connection) {
+            connection.operationInProgress = true;
+        }
+    }
+    // Check if operation is in progress
+    isOperationInProgress(port) {
+        const connection = this.activeConnections.get(port);
+        return connection ? connection.operationInProgress : false;
+    }
+    // Mark operation as completed
+    markOperationCompleted(port) {
+        const connection = this.activeConnections.get(port);
+        if (connection) {
+            connection.operationInProgress = false;
         }
     }
     // Clean up old connections
@@ -140,8 +160,17 @@ function runMpremote(args, opts = {}) {
             const connectIndex = args.indexOf("connect");
             if (connectIndex !== -1 && connectIndex + 1 < args.length) {
                 port = args[connectIndex + 1];
+                // Check if operation is already in progress on this port
+                if (connectionManager.isOperationInProgress(port)) {
+                    console.log(`[DEBUG] runMpremote: Operation already in progress on port ${port}, queuing...`);
+                    // Wait a bit and retry
+                    setTimeout(executeCommand, 100);
+                    return;
+                }
                 // Get connection info from manager
                 const connection = connectionManager.getConnection(port);
+                // Mark operation as started
+                connectionManager.markOperationStarted(port);
                 // Mark as healthy initially
                 connectionManager.markHealthy(port);
             }
@@ -164,10 +193,16 @@ function runMpremote(args, opts = {}) {
                         errorStr.includes("connection failed"))) {
                         connectionManager.markUnhealthy(port);
                     }
+                    // Mark operation as completed (even on failure)
+                    if (port) {
+                        connectionManager.markOperationCompleted(port);
+                    }
                     // Retry on transient errors
                     if (attempt <= maxRetries && (errorStr.includes("device not configured") ||
                         errorStr.includes("connection timeout") ||
-                        errorStr.includes("serial read failed"))) {
+                        errorStr.includes("serial read failed") ||
+                        errorStr.includes("failed to access") ||
+                        errorStr.includes("it may be in use by another program"))) {
                         console.log(`mpremote command failed (attempt ${attempt}/${maxRetries + 1}), retrying...`);
                         setTimeout(executeCommand, 500 * attempt); // Exponential backoff
                         return;
@@ -177,6 +212,7 @@ function runMpremote(args, opts = {}) {
                 // Mark connection as healthy on success
                 if (port) {
                     connectionManager.markHealthy(port);
+                    // markHealthy already sets operationInProgress to false
                 }
                 resolve({ stdout: String(stdout), stderr: String(stderr) });
             });
@@ -425,89 +461,28 @@ function parseTreeLines(treeOutput) {
     const dirStack = [];
     console.log(`[DEBUG] Parsing ${lines.length} tree lines`);
     for (const line of lines) {
+        // Skip irrelevant lines
         if (!line.trim() || line.includes('tree') || line === ':/' || line === ':')
             continue;
         console.log(`[DEBUG] Processing: "${line}"`);
-        // Count tree drawing characters to determine depth
-        // Each "│" or "├" or "└" represents a level in the hierarchy
-        const treeChars = line.match(/([├└│])/g) || [];
-        let depth = 0;
-        // Count the tree structure characters
-        for (const char of treeChars) {
-            if (char === '├' || char === '└') {
-                depth++;
-            }
-            else if (char === '│') {
-                // Continuation character, counts as depth
-                depth++;
-            }
+        // Parse the line to get level and name
+        const parseResult = parseTreeLine(line);
+        if (!parseResult) {
+            console.log(`[DEBUG] Could not parse line: "${line}"`);
+            continue;
         }
-        // Adjust depth - tree characters start from the left
-        if (depth > 0) {
-            depth = depth - 1; // Adjust because root level has 0 depth
-        }
-        console.log(`[DEBUG] Tree chars: ${treeChars.length}, Final depth: ${depth}`);
-        // Extract name (remove tree prefixes ├── └── │)
-        // First, try to match lines with tree drawing characters
-        let nameMatch = line.match(/[├└]──\s+(.+)$/);
-        if (!nameMatch) {
-            // Try alternative pattern for continuation lines or different tree formats
-            nameMatch = line.match(/[│├└]+\s*[├└]──\s+(.+)$/);
-            if (!nameMatch) {
-                // Try even more flexible pattern
-                nameMatch = line.match(/[├└]\s*──\s*(.+)$/);
-                if (!nameMatch) {
-                    console.log(`[DEBUG] No name match for: "${line}"`);
-                    continue;
-                }
-            }
-        }
-        const name = nameMatch[1].trim();
-        console.log(`[DEBUG] Extracted name: "${name}"`);
-        // Adjust directory stack to match current depth
-        // The stack should have 'depth' elements for an item at depth 'depth'
-        while (dirStack.length > depth) {
-            const popped = dirStack.pop();
-            console.log(`[DEBUG] Popped from stack: ${popped} (stack now: [${dirStack.join(', ')}])`);
-        }
-        // For debugging: show current stack state
-        console.log(`[DEBUG] Current stack before processing: [${dirStack.join(', ')}]`);
+        const { level, name } = parseResult;
+        console.log(`[DEBUG] Parsed level: ${level}, name: "${name}"`);
+        // Adjust directory stack to match current level
+        // Keep only elements up to the current level
+        dirStack.splice(level);
         // Build full path
         const fullPath = dirStack.length === 0 ? `/${name}` : `${dirStack[dirStack.length - 1]}/${name}`;
         console.log(`[DEBUG] Built full path: ${fullPath}`);
-        // Determine if it's a directory by checking if it has children in subsequent lines
-        let isDir = false;
-        const currentIndex = lines.indexOf(line);
-        // Look ahead to see if there are lines with greater depth
-        for (let j = currentIndex + 1; j < lines.length && j < currentIndex + 10; j++) { // Limit search to next 10 lines
-            const nextLine = lines[j].trim();
-            if (!nextLine || nextLine.includes('tree') || nextLine === ':')
-                break;
-            // Check if next line has tree characters indicating children
-            const nextTreeMatch = nextLine.match(/[├└]──\s+/);
-            if (nextTreeMatch) {
-                // Count tree characters in next line
-                const nextTreeChars = nextLine.match(/([├└│])/g) || [];
-                const nextDepth = nextTreeChars.length;
-                if (nextDepth > treeChars.length) { // Must have more tree chars than current line
-                    isDir = true;
-                    console.log(`[DEBUG] ${name} is directory (has children at depth ${nextDepth})`);
-                    break;
-                }
-            }
-            // If we hit a line at the same or lesser depth, stop looking
-            const nextTreeChars = nextLine.match(/([├└│])/g) || [];
-            if (nextTreeChars.length <= treeChars.length) {
-                break;
-            }
-        }
-        // Also check if it looks like a directory (no extension and reasonable name)
-        if (!isDir && !name.includes('.') && name !== 'tree' && name.length > 0 && !name.startsWith('.')) {
-            isDir = true;
-            console.log(`[DEBUG] ${name} assumed directory (no extension)`);
-        }
+        // Determine if it's a directory
+        const isDir = determineIsDirectory(name, lines, lines.indexOf(line));
         console.log(`[DEBUG] Final determination: ${name} is ${isDir ? 'directory' : 'file'}`);
-        result.push({ fullPath, name, isDir, depth });
+        result.push({ fullPath, name, isDir, depth: level });
         // Add to directory stack if it's a directory
         if (isDir) {
             dirStack.push(fullPath);
@@ -516,6 +491,91 @@ function parseTreeLines(treeOutput) {
     }
     console.log(`[DEBUG] Parsed ${result.length} items:`, result.map(r => `${r.fullPath} (${r.isDir ? 'dir' : 'file'})`));
     return result;
+}
+// Helper function to parse a single tree line
+function parseTreeLine(line) {
+    if (!line.trim())
+        return null;
+    const originalLine = line;
+    let level = 0;
+    let pos = 0;
+    // Analyze character by character from the start
+    while (pos < line.length) {
+        const remaining = line.substring(pos);
+        // Check for specific tree patterns
+        if (remaining.startsWith('├──') || remaining.startsWith('└──')) {
+            // This is the current item at this level
+            const name = remaining.substring(3).trim();
+            return { level, name };
+        }
+        else if (remaining.startsWith('│   ')) {
+            // Continuation of parent level - advance level
+            level += 1;
+            pos += 4;
+        }
+        else if (remaining.startsWith('    ')) {
+            // 4 spaces can also indicate level
+            level += 1;
+            pos += 4;
+        }
+        else {
+            // If no pattern matches, check for space-based indentation
+            const stripped = line.trim();
+            if (stripped && stripped !== line) {
+                // Count spaces/indentation
+                const indent = line.length - stripped.length;
+                level = Math.floor(indent / 4); // Typically 4 spaces per level
+                return { level, name: stripped };
+            }
+            break;
+        }
+    }
+    return null;
+}
+// Helper function to determine if an item is a directory
+function determineIsDirectory(name, allLines, currentIndex) {
+    // First, check if it has an extension (likely a file)
+    if (name.includes('.')) {
+        // Check for common file extensions
+        const parts = name.split('.');
+        if (parts.length >= 2) {
+            const ext = parts[parts.length - 1].toLowerCase();
+            const fileExtensions = new Set([
+                'py', 'txt', 'log', 'md', 'html', 'css', 'js', 'json',
+                'ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'csv', 'xml',
+                'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf'
+            ]);
+            if (fileExtensions.has(ext)) {
+                return false;
+            }
+        }
+    }
+    // Check for special files without extension
+    const specialFiles = new Set(['main', 'boot', 'README', 'LICENSE', 'Makefile']);
+    if (specialFiles.has(name)) {
+        return false;
+    }
+    // Look ahead in the tree to see if this item has children
+    for (let j = currentIndex + 1; j < allLines.length && j < currentIndex + 10; j++) {
+        const nextLine = allLines[j].trim();
+        if (!nextLine || nextLine.includes('tree') || nextLine === ':')
+            break;
+        // Parse the next line
+        const nextParse = parseTreeLine(nextLine);
+        if (nextParse && nextParse.level > 0) {
+            // If next item has higher level, this is a directory
+            return true;
+        }
+        // If we hit an item at the same or lower level, stop looking
+        if (nextParse && nextParse.level <= 0) {
+            break;
+        }
+    }
+    // If no extension and not a special file, assume it's a directory
+    if (!name.includes('.') && name !== 'tree' && name.length > 0 && !name.startsWith('.')) {
+        return true;
+    }
+    return false;
 }
 // Build tree structure from parsed lines (helper function)
 function buildTreeFromParsedLines(parsedLines) {
@@ -724,6 +784,7 @@ async function mkdir(p) {
         clearFileTreeCache();
     }
     catch (error) {
+        // Mark connection as unhealthy
         connectionManager.markUnhealthy(connect);
         throw error;
     }
@@ -776,6 +837,8 @@ async function cpToDevice(localPath, devicePath) {
     }
     catch (error) {
         console.error(`[DEBUG] cpToDevice: Upload failed:`, error);
+        // Mark connection as unhealthy
+        connectionManager.markUnhealthy(connect);
         // Check if it's a read-only file system error
         const errorStr = String(error?.message || error).toLowerCase();
         if (errorStr.includes("read-only file system")) {
@@ -878,6 +941,7 @@ async function deleteAny(p) {
         clearFileTreeCache();
     }
     catch (error) {
+        // Mark connection as unhealthy
         connectionManager.markUnhealthy(connect);
         throw error;
     }
@@ -990,15 +1054,61 @@ async function deleteAllInPath(rootPath) {
         throw new Error("Select a specific serial port first");
     // Get connection info for optimization
     const connection = connectionManager.getConnection(connect);
+    const deleted = [];
+    const errors = [];
     try {
-        // Use mpremote fs rm -r command for recursive deletion
-        const pathArg = rootPath && rootPath !== "/" ? rootPath : "/";
-        await runMpremote(["connect", connect, "fs", "rm", "-r", pathArg], { retryOnFailure: true });
-        return { deleted: [rootPath], errors: [], deleted_count: 1, error_count: 0 };
+        // For root path, we need to delete the contents, not the root directory itself
+        if (rootPath === "/") {
+            // First, get the list of items in the root directory
+            const items = await listTreeStats("/");
+            // Filter to get only direct children of the root (depth 1)
+            const rootItems = items.filter(item => {
+                const pathParts = item.path.split('/').filter(part => part.length > 0);
+                return pathParts.length === 1; // Direct children of root
+            });
+            // Delete each root-level item individually (sequentially to avoid concurrent access)
+            for (const item of rootItems) {
+                try {
+                    console.log(`[DEBUG] deleteAllInPath: Deleting ${item.path}...`);
+                    await runMpremote(["connect", connect, "fs", "rm", "-r", item.path], { retryOnFailure: true });
+                    deleted.push(item.path);
+                    console.log(`[DEBUG] deleteAllInPath: Successfully deleted ${item.path}`);
+                }
+                catch (error) {
+                    errors.push(`Failed to delete ${item.path}: ${error?.message || error}`);
+                    connectionManager.markUnhealthy(connect);
+                    console.error(`[DEBUG] deleteAllInPath: Failed to delete ${item.path}:`, error);
+                }
+            }
+        }
+        else {
+            // For non-root paths, we can delete the directory itself
+            try {
+                await runMpremote(["connect", connect, "fs", "rm", "-r", rootPath], { retryOnFailure: true });
+                deleted.push(rootPath);
+            }
+            catch (error) {
+                errors.push(`Failed to delete ${rootPath}: ${error?.message || error}`);
+                connectionManager.markUnhealthy(connect);
+            }
+        }
+        // Invalidate cache since filesystem changed
+        clearFileTreeCache();
+        return {
+            deleted,
+            errors,
+            deleted_count: deleted.length,
+            error_count: errors.length
+        };
     }
     catch (error) {
         connectionManager.markUnhealthy(connect);
-        return { deleted: [], errors: [String(error?.message || error)], deleted_count: 0, error_count: 1 };
+        return {
+            deleted: [],
+            errors: [String(error?.message || error)],
+            deleted_count: 0,
+            error_count: 1
+        };
     }
 }
 async function runFile(localPath) {

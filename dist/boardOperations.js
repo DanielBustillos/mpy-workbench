@@ -350,7 +350,7 @@ class BoardOperations {
                                 message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
                             });
                             // Use individual cp command instead of bulk
-                            const cpArgs = ["connect", "cu.usbmodem101", "cp", localPath, `:${devicePath}`];
+                            const cpArgs = ["connect", connect, "cp", localPath, `:${devicePath}`];
                             console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
                             await mp.runMpremote(cpArgs, { retryOnFailure: true });
                             this.tree.addNode(devicePath, false); // Add file to tree
@@ -371,22 +371,10 @@ class BoardOperations {
                     progress.report({ increment: 100, message: "All files uploaded successfully" });
                 });
             });
-            // Save manifest locally and on device
+            // Save manifest locally only (no device manifest to avoid .mpy-workbench folder on board)
             const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
             await (0, sync_1.saveManifest)(manifestPath, man);
-            const tmp = path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, "temp_manifest.json");
-            await fs.mkdir(path.dirname(tmp), { recursive: true });
-            await fs.writeFile(tmp, JSON.stringify(man));
-            const deviceManifest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/.mpy-workbench/esp32sync.json";
-            try {
-                await this.withAutoSuspend(() => mp.cpToDevice(tmp, deviceManifest));
-                console.log(`[DEBUG] syncBaseline: ✓ Manifest uploaded to device: ${deviceManifest}`);
-            }
-            catch (manifestError) {
-                console.error(`[DEBUG] syncBaseline: ✗ Failed to upload manifest to device:`, manifestError.message);
-                // Don't fail the entire sync if manifest upload fails
-                vscode.window.showWarningMessage(`Manifest upload failed, but file sync completed: ${manifestError.message}`);
-            }
+            console.log(`[DEBUG] syncBaseline: ✓ Manifest saved locally: ${manifestPath}`);
             vscode.window.showInformationMessage("Board: Sync all files (Local → Board) completed");
             // Clear any diff/local-only markers after successful sync-all
             this.decorations.clear();
