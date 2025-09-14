@@ -592,6 +592,7 @@ export class BoardOperations {
 
   async checkDiffs(): Promise<void> {
     const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+    console.log(`[DEBUG] checkDiffs: rootPath: ${rootPath}`);
 
     await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
@@ -691,6 +692,7 @@ export class BoardOperations {
         } else {
           // File exists locally but not on board
           const devicePath = this.toDevicePath(localRel, rootPath);
+          console.log(`[DEBUG] checkDiffs: Adding local-only: localRel=${localRel}, devicePath=${devicePath}`);
           localOnlySet.add(devicePath);
         }
       }
@@ -719,8 +721,7 @@ export class BoardOperations {
       (this.decorations as any)._originalLocalOnly = originalLocalOnlySet;
       (this.decorations as any)._originalBoardOnly = originalBoardOnlySet;
 
-      // Refresh the tree view
-      this.tree.refreshTree();
+      // Automatic sync will refresh the tree
 
       const changedFilesCount = originalDiffSet.size;
       const localOnlyFilesCount = originalLocalOnlySet.size;
@@ -731,9 +732,12 @@ export class BoardOperations {
         `Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only, ${boardOnlyFilesCount} board-only, ${totalFilesFlagged} total files)`
       );
     });
+
+    // Refresh tree to show decorations and clear cache for fresh device listing
+    await vscode.commands.executeCommand("mpyWorkbench.refresh");
   }
 
-  async syncDiffsLocalToBoard(): Promise<void> {
+  async syncDiffsLocalToBoard(noClear: boolean = false): Promise<void> {
     const ws = vscode.workspace.workspaceFolders?.[0];
     if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
     const initialized = await isLocalSyncInitialized();
@@ -800,18 +804,22 @@ export class BoardOperations {
       const total = allFilesToSync.length;
       await this.withAutoSuspend(async () => {
         for (const devicePath of allFilesToSync) {
+          console.log(`[DEBUG] syncDiffsLocalToBoard: Processing devicePath: ${devicePath}, rootPath: ${rootPath}`);
           const rel = toLocalRelative(devicePath, rootPath);
+          console.log(`[DEBUG] syncDiffsLocalToBoard: rel: ${rel}`);
           const abs = path.join(ws.uri.fsPath, ...rel.split('/'));
+          console.log(`[DEBUG] syncDiffsLocalToBoard: abs: ${abs}`);
 
           try {
             await fs.access(abs);
             // Check if it's a directory and skip it
             const stat = await fs.stat(abs);
             if (stat.isDirectory()) {
-              console.log(`Skipping directory: ${abs}`);
+              console.log(`[DEBUG] syncDiffsLocalToBoard: Skipping directory: ${abs}`);
               continue;
             }
-          } catch {
+          } catch (accessError: any) {
+            console.error(`[DEBUG] syncDiffsLocalToBoard: File not accessible: ${abs}, error: ${accessError.message}`);
             continue;
           }
 
@@ -819,22 +827,32 @@ export class BoardOperations {
           const action = isLocalOnly ? "Uploading (new)" : "Uploading";
           progress.report({ message: `${action} ${rel} (${++done}/${total})` });
 
-          await mp.uploadReplacing(abs, devicePath);
-          this.tree.addNode(devicePath, false); // Add uploaded file to tree
+          try {
+            await mp.uploadReplacing(abs, devicePath);
+            this.tree.addNode(devicePath, false); // Add uploaded file to tree
+            console.log(`[DEBUG] syncDiffsLocalToBoard: Successfully uploaded: ${abs} -> ${devicePath}`);
+          } catch (uploadError: any) {
+            console.error(`[DEBUG] syncDiffsLocalToBoard: Failed to upload ${abs} -> ${devicePath}, error: ${uploadError.message}`);
+            // Continue with next file instead of failing completely
+          }
         }
       });
     });
-    this.decorations.clear();
-    this.tree.refreshTree();
     const diffCount = diffs.length;
     const localOnlyCount = localOnlyFiles.length;
     const message = localOnlyCount > 0
       ? `Board: ${diffCount} changed and ${localOnlyCount} new files uploaded to board`
       : `Board: ${diffCount} diffed files uploaded to board`;
-    vscode.window.showInformationMessage(message + " and marks cleared");
+    if (!noClear) {
+      this.decorations.clear();
+      vscode.window.showInformationMessage(message + " and marks cleared");
+      this.tree.refreshTree();
+    } else {
+      this.tree.refreshTree();
+    }
   }
 
-  async syncDiffsBoardToLocal(): Promise<void> {
+  async syncDiffsBoardToLocal(noClear: boolean = false): Promise<void> {
     const ws = vscode.workspace.workspaceFolders?.[0];
     if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
 
@@ -906,9 +924,13 @@ export class BoardOperations {
         }
       });
     });
-    this.decorations.clear();
-    vscode.window.showInformationMessage("Board: Diffed files downloaded from board and marks cleared");
-    this.tree.refreshTree();
+    if (!noClear) {
+      this.decorations.clear();
+      vscode.window.showInformationMessage("Board: Diffed files downloaded from board and marks cleared");
+      this.tree.refreshTree();
+    } else {
+      this.tree.refreshTree();
+    }
   }
 
   async openFile(node: Esp32Node): Promise<void> {
@@ -920,20 +942,28 @@ export class BoardOperations {
       const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
       await fs.mkdir(path.dirname(abs), { recursive: true });
 
-      // If not present locally, fetch from device to local path
-      const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
-      if (!fileExistsLocally) {
-        console.log(`[DEBUG] openFile: File not found locally, copying from board: ${node.path} -> ${abs}`);
-        try {
-          await this.withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
-          console.log(`[DEBUG] openFile: Successfully copied file from board`);
-        } catch (copyError: any) {
-          console.error(`[DEBUG] openFile: Failed to copy file from board:`, copyError);
-          vscode.window.showErrorMessage(`Failed to copy file from board: ${copyError?.message || copyError}`);
-          return; // Don't try to open the file if copy failed
-        }
+      // Check if file is local-only (exists locally but not on board)
+      const isLocalOnly = (node as any).isLocalOnly;
+
+      if (isLocalOnly) {
+        // For local-only files, just open the local file directly
+        console.log(`[DEBUG] openFile: Opening local-only file: ${abs}`);
       } else {
-        console.log(`[DEBUG] openFile: File already exists locally: ${abs}`);
+        // For files that should exist on board, check if present locally first
+        const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
+        if (!fileExistsLocally) {
+          console.log(`[DEBUG] openFile: File not found locally, copying from board: ${node.path} -> ${abs}`);
+          try {
+            await this.withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+            console.log(`[DEBUG] openFile: Successfully copied file from board`);
+          } catch (copyError: any) {
+            console.error(`[DEBUG] openFile: Failed to copy file from board:`, copyError);
+            vscode.window.showErrorMessage(`Failed to copy file from board: ${copyError?.message || copyError}`);
+            return; // Don't try to open the file if copy failed
+          }
+        } else {
+          console.log(`[DEBUG] openFile: File already exists locally: ${abs}`);
+        }
       }
 
       // Verify the file exists and has content before opening

@@ -961,22 +961,30 @@ function activate(context) {
             const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
             const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
             await fs.mkdir(path.dirname(abs), { recursive: true });
-            // If not present locally, fetch from device to local path
-            const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
-            if (!fileExistsLocally) {
-                console.log(`[DEBUG] openFile (extension): File not found locally, copying from board: ${node.path} -> ${abs}`);
-                try {
-                    await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
-                    console.log(`[DEBUG] openFile (extension): Successfully copied file from board`);
-                }
-                catch (copyError) {
-                    console.error(`[DEBUG] openFile (extension): Failed to copy file from board:`, copyError);
-                    vscode.window.showErrorMessage(`Failed to copy file from board: ${copyError?.message || copyError}`);
-                    return; // Don't try to open the file if copy failed
-                }
+            // Check if file is local-only (exists locally but not on board)
+            const isLocalOnly = node.isLocalOnly;
+            if (isLocalOnly) {
+                // For local-only files, just open the local file directly
+                console.log(`[DEBUG] openFile (extension): Opening local-only file: ${abs}`);
             }
             else {
-                console.log(`[DEBUG] openFile (extension): File already exists locally: ${abs}`);
+                // For files that should exist on board, check if present locally first
+                const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
+                if (!fileExistsLocally) {
+                    console.log(`[DEBUG] openFile (extension): File not found locally, copying from board: ${node.path} -> ${abs}`);
+                    try {
+                        await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+                        console.log(`[DEBUG] openFile (extension): Successfully copied file from board`);
+                    }
+                    catch (copyError) {
+                        console.error(`[DEBUG] openFile (extension): Failed to copy file from board:`, copyError);
+                        vscode.window.showErrorMessage(`Failed to copy file from board: ${copyError?.message || copyError}`);
+                        return; // Don't try to open the file if copy failed
+                    }
+                }
+                else {
+                    console.log(`[DEBUG] openFile (extension): File already exists locally: ${abs}`);
+                }
             }
             const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
             await vscode.window.showTextDocument(doc, { preview: false });

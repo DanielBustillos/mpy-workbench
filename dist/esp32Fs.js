@@ -38,6 +38,9 @@ class Esp32Tree {
             return item;
         }
         const item = new vscode.TreeItem(element.name, element.kind === "dir" ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+        if (element.isLocalOnly) {
+            item.tooltip = '?';
+        }
         item.contextValue = element.kind; // for menus
         item.resourceUri = vscode.Uri.parse(`esp32:${element.path}`);
         item.iconPath = element.kind === "dir"
@@ -152,7 +155,7 @@ class Esp32Tree {
                 }
             }
             catch { }
-            // Add local-only files to the tree view
+            // Add local-only files and directories to the tree view
             try {
                 const ws = vscode.workspace.workspaceFolders?.[0];
                 if (ws) {
@@ -161,25 +164,38 @@ class Esp32Tree {
                     if (decorations) {
                         const localOnlyFiles = decorations.getLocalOnly();
                         const currentPathPrefix = path === "/" ? "/" : path + "/";
+                        // Collect direct children that should be added
+                        const itemsToAdd = new Map();
                         // Find local-only files that should appear in this directory
                         for (const localOnlyPath of localOnlyFiles) {
                             if (localOnlyPath.startsWith(currentPathPrefix)) {
                                 const remainingPath = localOnlyPath.slice(currentPathPrefix.length);
-                                // Only add direct children (no deeper nested paths)
+                                // Only process direct children (no deeper nested paths)
                                 if (remainingPath && !remainingPath.includes('/')) {
-                                    // Check if this file/dir is not already in the board entries
+                                    // Check if this item is not already in the board entries
                                     const alreadyExists = nodes.some(n => n.name === remainingPath);
                                     if (!alreadyExists) {
-                                        // For now, assume local-only items are files (we could check the filesystem for more accuracy)
-                                        nodes.push({
-                                            kind: "file",
-                                            name: remainingPath,
-                                            path: localOnlyPath,
-                                            isLocalOnly: true
-                                        });
+                                        itemsToAdd.set(remainingPath, { path: localOnlyPath, isDir: false });
+                                    }
+                                }
+                                else if (remainingPath && remainingPath.includes('/')) {
+                                    // This is a nested path - we need to add the parent directory
+                                    const parentDir = remainingPath.split('/')[0];
+                                    const parentPath = currentPathPrefix + parentDir;
+                                    if (!itemsToAdd.has(parentDir) && !nodes.some(n => n.name === parentDir)) {
+                                        itemsToAdd.set(parentDir, { path: parentPath, isDir: true });
                                     }
                                 }
                             }
+                        }
+                        // Add the collected items to nodes
+                        for (const [name, item] of itemsToAdd) {
+                            nodes.push({
+                                kind: item.isDir ? "dir" : "file",
+                                name: name,
+                                path: item.path,
+                                isLocalOnly: true
+                            });
                         }
                     }
                 }
