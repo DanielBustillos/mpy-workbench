@@ -720,12 +720,10 @@ export function activate(context: vscode.ExtensionContext) {
                   message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
                 });
 
-                // Use individual cp command instead of bulk
-                const devicePathWithPrefix = devicePath === "/" ? ":" : `:${devicePath}`;
-                const cpArgs = ["connect", "auto", "fs", "cp", localPath, devicePathWithPrefix];
-                console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
+                // Use cpToDevice which includes directory creation logic
+                console.log(`[DEBUG] syncBaseline: Executing cpToDevice: ${localPath} -> ${devicePath}`);
 
-                await runMpremote(cpArgs, { retryOnFailure: true });
+                await withAutoSuspend(() => mp.cpToDevice(localPath, devicePath));
 
                 tree.addNode(devicePath, false); // Add file to tree
 

@@ -348,10 +348,9 @@ class BoardOperations {
                                 increment: (80 / actualTotal),
                                 message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
                             });
-                            // Use individual cp command instead of bulk
-                            const cpArgs = ["connect", connect, "cp", localPath, `:${devicePath}`];
-                            console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
-                            await mp.runMpremote(cpArgs, { retryOnFailure: true });
+                            // Use cpToDevice which includes directory creation logic
+                            console.log(`[DEBUG] syncBaseline: Executing cpToDevice: ${localPath} -> ${devicePath}`);
+                            await mp.cpToDevice(localPath, devicePath);
                             this.tree.addNode(devicePath, false); // Add file to tree
                             uploaded++;
                             console.log(`[DEBUG] syncBaseline: ✓ Individual upload ${uploaded}/${actualTotal} successful: ${relativePath}`);
@@ -533,8 +532,6 @@ class BoardOperations {
         return normalizedRootPath + "/" + normalizedLocalPath;
     }
     async checkDiffs() {
-        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
-        console.log(`[DEBUG] checkDiffs: rootPath: ${rootPath}`);
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: "Checking file differences...",
@@ -545,6 +542,8 @@ class BoardOperations {
                 vscode.window.showErrorMessage("No workspace folder open");
                 return;
             }
+            const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+            console.log(`[DEBUG] checkDiffs: rootPath: ${rootPath}`);
             // Check if workspace is initialized for sync
             const initialized = await isLocalSyncInitialized();
             if (!initialized) {

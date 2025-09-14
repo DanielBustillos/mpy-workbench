@@ -675,11 +675,9 @@ function activate(context) {
                                 increment: (80 / actualTotal),
                                 message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
                             });
-                            // Use individual cp command instead of bulk
-                            const devicePathWithPrefix = devicePath === "/" ? ":" : `:${devicePath}`;
-                            const cpArgs = ["connect", "auto", "fs", "cp", localPath, devicePathWithPrefix];
-                            console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
-                            await (0, mpremote_1.runMpremote)(cpArgs, { retryOnFailure: true });
+                            // Use cpToDevice which includes directory creation logic
+                            console.log(`[DEBUG] syncBaseline: Executing cpToDevice: ${localPath} -> ${devicePath}`);
+                            await withAutoSuspend(() => mp.cpToDevice(localPath, devicePath));
                             tree.addNode(devicePath, false); // Add file to tree
                             uploaded++;
                             console.log(`[DEBUG] syncBaseline: ✓ Individual upload ${uploaded}/${actualTotal} successful: ${relativePath}`);

@@ -1,6 +1,5 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.mvOnDevice = mvOnDevice;
 exports.runMpremote = runMpremote;
 exports.ls = ls;
 exports.clearFileTreeCache = clearFileTreeCache;
@@ -15,6 +14,7 @@ exports.cpFromDevice = cpFromDevice;
 exports.cpToDevice = cpToDevice;
 exports.uploadReplacing = uploadReplacing;
 exports.deleteFile = deleteFile;
+exports.deleteDirectoryRecursive = deleteDirectoryRecursive;
 exports.deleteAny = deleteAny;
 exports.deleteFolderRecursive = deleteFolderRecursive;
 exports.fileExists = fileExists;
@@ -29,20 +29,8 @@ exports.healthCheck = healthCheck;
 exports.getConnectionStats = getConnectionStats;
 exports.getBoardFilesAndSizes = getBoardFilesAndSizes;
 exports.getBoardFileSizes = getBoardFileSizes;
+exports.mvOnDevice = mvOnDevice;
 exports.cleanupConnections = cleanupConnections;
-async function mvOnDevice(src, dst) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
-    if (!connect || connect === "auto")
-        throw new Error("Select a specific serial port first");
-    try {
-        const srcArg = src && src !== "/" ? `"${src}"` : "/";
-        const dstArg = dst && dst !== "/" ? `"${dst}"` : "/";
-        await runMpremote(["connect", connect, "fs", "mv", srcArg, dstArg]);
-    }
-    catch (error) {
-        throw new Error(`Move/rename failed: ${error?.message || error}`);
-    }
-}
 const node_child_process_1 = require("node:child_process");
 const vscode = require("vscode");
 const path = require("node:path");
@@ -826,7 +814,28 @@ async function cpToDevice(localPath, devicePath) {
     // Get connection info for optimization
     const connection = connectionManager.getConnection(connect);
     try {
+        // Ensure parent directories exist on device before copying
         const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
+        const parentDir = deviceArg.substring(0, deviceArg.lastIndexOf('/'));
+        if (parentDir && parentDir !== "" && parentDir !== "/") {
+            console.log(`[DEBUG] cpToDevice: Creating parent directory: ${parentDir}`);
+            try {
+                // Create parent directory with -p flag (recursive, like mkdir -p)
+                await runMpremote(["connect", connect, "fs", "mkdir", "-p", parentDir], { retryOnFailure: true });
+                console.log(`[DEBUG] cpToDevice: ✓ Parent directory created: ${parentDir}`);
+            }
+            catch (mkdirError) {
+                // Directory might already exist, which is fine
+                const errorStr = String(mkdirError?.message || mkdirError).toLowerCase();
+                if (!errorStr.includes("file exists") && !errorStr.includes("directory exists")) {
+                    console.warn(`[DEBUG] cpToDevice: ⚠ Failed to create parent directory ${parentDir}:`, mkdirError);
+                    // Continue anyway - the directory might already exist
+                }
+                else {
+                    console.log(`[DEBUG] cpToDevice: ✓ Parent directory already exists: ${parentDir}`);
+                }
+            }
+        }
         // For cp TO device FROM local, device path needs : prefix
         const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
         const commandArgs = ["connect", connect, "fs", "cp", localPath, devicePathWithPrefix];
@@ -841,8 +850,42 @@ async function cpToDevice(localPath, devicePath) {
         console.error(`[DEBUG] cpToDevice: Upload failed:`, error);
         // Mark connection as unhealthy
         connectionManager.markUnhealthy(connect);
-        // Check if it's a read-only file system error
+        // Check error type
         const errorStr = String(error?.message || error).toLowerCase();
+        // Check if it's a "No such file or directory" error (missing parent directory)
+        if (errorStr.includes("no such file or directory") || errorStr.includes("file not found")) {
+            console.log(`[DEBUG] cpToDevice: Directory missing error detected. Attempting to create parent directories...`);
+            const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
+            const pathParts = deviceArg.split('/').filter(part => part.length > 0);
+            // Create each directory level step by step
+            for (let i = 1; i < pathParts.length; i++) {
+                const partialPath = '/' + pathParts.slice(0, i).join('/');
+                try {
+                    console.log(`[DEBUG] cpToDevice: Creating directory level: ${partialPath}`);
+                    await runMpremote(["connect", connect, "fs", "mkdir", partialPath], { retryOnFailure: false });
+                }
+                catch (mkdirErr) {
+                    const mkdirErrStr = String(mkdirErr?.message || mkdirErr).toLowerCase();
+                    if (!mkdirErrStr.includes("file exists") && !mkdirErrStr.includes("directory exists")) {
+                        console.warn(`[DEBUG] cpToDevice: Could not create ${partialPath}:`, mkdirErr);
+                    }
+                }
+            }
+            // Retry the original copy operation
+            try {
+                console.log(`[DEBUG] cpToDevice: Retrying copy after creating directories...`);
+                const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
+                await runMpremote(["connect", connect, "fs", "cp", localPath, devicePathWithPrefix], { retryOnFailure: false });
+                console.log(`[DEBUG] cpToDevice: ✓ Copy succeeded after creating directories!`);
+                clearFileTreeCache();
+                return; // Success!
+            }
+            catch (retryError) {
+                console.error(`[DEBUG] cpToDevice: Retry also failed:`, retryError);
+                // Continue to other error handling below
+            }
+        }
+        // Check if it's a read-only file system error
         if (errorStr.includes("read-only file system")) {
             console.log(`[DEBUG] cpToDevice: Read-only file system detected. Attempting recovery...`);
             // Try to get filesystem information
@@ -912,12 +955,73 @@ async function uploadReplacing(localPath, devicePath) {
     // Get connection info for optimization
     const connection = connectionManager.getConnection(connect);
     try {
-        // For replacing upload, use mpremote fs cp with -f flag to force overwrite
+        // Ensure parent directories exist on device before uploading
         const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
+        const parentDir = deviceArg.substring(0, deviceArg.lastIndexOf('/'));
+        if (parentDir && parentDir !== "" && parentDir !== "/") {
+            console.log(`[DEBUG] uploadReplacing: Creating parent directory: ${parentDir}`);
+            try {
+                // Create parent directory with -p flag (recursive, like mkdir -p)
+                await runMpremote(["connect", connect, "fs", "mkdir", "-p", parentDir], { retryOnFailure: true });
+                console.log(`[DEBUG] uploadReplacing: ✓ Parent directory created: ${parentDir}`);
+            }
+            catch (mkdirError) {
+                // Directory might already exist, which is fine
+                const errorStr = String(mkdirError?.message || mkdirError).toLowerCase();
+                if (!errorStr.includes("file exists") && !errorStr.includes("directory exists")) {
+                    console.warn(`[DEBUG] uploadReplacing: ⚠ Failed to create parent directory ${parentDir}:`, mkdirError);
+                    // Continue anyway - the directory might already exist
+                }
+                else {
+                    console.log(`[DEBUG] uploadReplacing: ✓ Parent directory already exists: ${parentDir}`);
+                }
+            }
+        }
+        // For replacing upload, use mpremote fs cp with -f flag to force overwrite
         const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
         await runMpremote(["connect", connect, "fs", "cp", "-f", localPath, devicePathWithPrefix], { retryOnFailure: true });
+        // Invalidate cache since filesystem changed
+        clearFileTreeCache();
     }
     catch (error) {
+        console.error(`[DEBUG] uploadReplacing: Upload failed:`, error);
+        // Mark connection as unhealthy
+        connectionManager.markUnhealthy(connect);
+        // Check error type
+        const errorStr = String(error?.message || error).toLowerCase();
+        // Check if it's a "No such file or directory" error (missing parent directory)
+        if (errorStr.includes("no such file or directory") || errorStr.includes("file not found")) {
+            console.log(`[DEBUG] uploadReplacing: Directory missing error detected. Attempting to create parent directories...`);
+            const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
+            const pathParts = deviceArg.split('/').filter(part => part.length > 0);
+            // Create each directory level step by step
+            for (let i = 1; i < pathParts.length; i++) {
+                const partialPath = '/' + pathParts.slice(0, i).join('/');
+                try {
+                    console.log(`[DEBUG] uploadReplacing: Creating directory level: ${partialPath}`);
+                    await runMpremote(["connect", connect, "fs", "mkdir", partialPath], { retryOnFailure: false });
+                }
+                catch (mkdirErr) {
+                    const mkdirErrStr = String(mkdirErr?.message || mkdirErr).toLowerCase();
+                    if (!mkdirErrStr.includes("file exists") && !mkdirErrStr.includes("directory exists")) {
+                        console.warn(`[DEBUG] uploadReplacing: Could not create ${partialPath}:`, mkdirErr);
+                    }
+                }
+            }
+            // Retry the original upload operation
+            try {
+                console.log(`[DEBUG] uploadReplacing: Retrying upload after creating directories...`);
+                const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
+                await runMpremote(["connect", connect, "fs", "cp", "-f", localPath, devicePathWithPrefix], { retryOnFailure: false });
+                console.log(`[DEBUG] uploadReplacing: ✓ Upload succeeded after creating directories!`);
+                clearFileTreeCache();
+                return; // Success!
+            }
+            catch (retryError) {
+                console.error(`[DEBUG] uploadReplacing: Retry also failed:`, retryError);
+                // Continue to throw original error
+            }
+        }
         connectionManager.markUnhealthy(connect);
         throw error;
     }
@@ -928,6 +1032,51 @@ async function deleteFile(p) {
         throw new Error("Select a specific serial port first");
     const pythonCode = `import os; os.remove('${p}')`;
     await runMpremote(["connect", connect, "exec", pythonCode]);
+}
+async function deleteDirectoryRecursive(p, connect) {
+    console.log(`[DEBUG] deleteDirectoryRecursive: Starting recursive delete for ${p}`);
+    try {
+        // First, list all contents of the directory
+        const { stdout } = await runMpremote(["connect", connect, "fs", "ls", p], { retryOnFailure: true });
+        const lines = String(stdout || "").split(/\r?\n/).filter(line => line.trim());
+        console.log(`[DEBUG] deleteDirectoryRecursive: Found ${lines.length} items in ${p}`);
+        // Delete each item in the directory
+        for (const line of lines) {
+            if (!line.trim() || line.includes('ls'))
+                continue;
+            const parts = line.trim().split(/\s+/).filter(part => part.length > 0);
+            if (parts.length >= 2) {
+                const size = parseInt(parts[0]) || 0;
+                const filename = parts.slice(1).join(' ');
+                const isDir = size === 0 && filename.endsWith('/');
+                const itemPath = p === "/" ? `/${filename.replace(/\/$/, '')}` : `${p}/${filename.replace(/\/$/, '')}`;
+                console.log(`[DEBUG] deleteDirectoryRecursive: Processing ${itemPath} (${isDir ? 'dir' : 'file'})`);
+                if (isDir) {
+                    // Recursively delete subdirectory
+                    await deleteDirectoryRecursive(itemPath, connect);
+                }
+                else {
+                    // Delete file
+                    try {
+                        await runMpremote(["connect", connect, "fs", "rm", itemPath], { retryOnFailure: true });
+                        console.log(`[DEBUG] deleteDirectoryRecursive: Deleted file ${itemPath}`);
+                    }
+                    catch (fileError) {
+                        console.warn(`[DEBUG] deleteDirectoryRecursive: Failed to delete file ${itemPath}:`, fileError);
+                        // Continue with other files even if one fails
+                    }
+                }
+            }
+        }
+        // Finally, delete the now-empty directory
+        console.log(`[DEBUG] deleteDirectoryRecursive: Deleting empty directory ${p}`);
+        await runMpremote(["connect", connect, "fs", "rmdir", p], { retryOnFailure: true });
+        console.log(`[DEBUG] deleteDirectoryRecursive: Successfully deleted directory ${p}`);
+    }
+    catch (error) {
+        console.error(`[DEBUG] deleteDirectoryRecursive: Failed to delete directory ${p}:`, error);
+        throw error;
+    }
 }
 async function deleteAny(p) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
@@ -952,7 +1101,25 @@ async function deleteAny(p) {
         clearFileTreeCache();
     }
     catch (error) {
-        // Mark connection as unhealthy
+        const errorMessage = String(error?.message || error).toLowerCase();
+        // Check if it's OSError: 39 (Directory not empty)
+        if (errorMessage.includes("oserror: 39") || errorMessage.includes("directory not empty")) {
+            console.log(`[DEBUG] deleteAny: Directory not empty, attempting recursive delete for ${p}`);
+            try {
+                // Fallback: Use manual recursive deletion for non-empty directories
+                await deleteDirectoryRecursive(p, connect);
+                console.log(`[DEBUG] deleteAny: Successfully deleted directory recursively: ${p}`);
+                // Invalidate cache since filesystem changed
+                clearFileTreeCache();
+                return;
+            }
+            catch (recursiveError) {
+                console.error(`[DEBUG] deleteAny: Recursive delete also failed for ${p}:`, recursiveError);
+                connectionManager.markUnhealthy(connect);
+                throw new Error(`Failed to delete directory ${p}: ${recursiveError?.message || recursiveError}`);
+            }
+        }
+        // Mark connection as unhealthy for other errors
         connectionManager.markUnhealthy(connect);
         throw error;
     }
@@ -1358,6 +1525,21 @@ async function getBoardFileSizes(rootPath = "/") {
         fileSizes.set(path, info.size);
     }
     return fileSizes;
+}
+async function mvOnDevice(src, dst) {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    try {
+        const srcArg = src && src !== "/" ? `"${src}"` : "/";
+        const dstArg = dst && dst !== "/" ? `"${dst}"` : "/";
+        await runMpremote(["connect", connect, "fs", "mv", srcArg, dstArg]);
+        // Invalidate cache since filesystem changed
+        clearFileTreeCache();
+    }
+    catch (error) {
+        throw new Error(`Move/rename failed: ${error?.message || error}`);
+    }
 }
 // Cleanup function for extension deactivation
 function cleanupConnections() {

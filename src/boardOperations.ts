@@ -385,11 +385,10 @@ export class BoardOperations {
                 message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
               });
 
-              // Use individual cp command instead of bulk
-              const cpArgs = ["connect", connect, "cp", localPath, `:${devicePath}`];
-              console.log(`[DEBUG] syncBaseline: Executing: mpremote ${cpArgs.join(' ')}`);
+              // Use cpToDevice which includes directory creation logic
+              console.log(`[DEBUG] syncBaseline: Executing cpToDevice: ${localPath} -> ${devicePath}`);
 
-              await mp.runMpremote(cpArgs, { retryOnFailure: true });
+              await mp.cpToDevice(localPath, devicePath);
 
               this.tree.addNode(devicePath, false); // Add file to tree
 
@@ -591,9 +590,6 @@ export class BoardOperations {
   }
 
   async checkDiffs(): Promise<void> {
-    const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-    console.log(`[DEBUG] checkDiffs: rootPath: ${rootPath}`);
-
     await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: "Checking file differences...",
@@ -604,6 +600,9 @@ export class BoardOperations {
         vscode.window.showErrorMessage("No workspace folder open");
         return;
       }
+
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+      console.log(`[DEBUG] checkDiffs: rootPath: ${rootPath}`);
 
       // Check if workspace is initialized for sync
       const initialized = await isLocalSyncInitialized();
