@@ -631,6 +631,21 @@ export class BoardOperations {
       const localManifest = await buildManifest(ws.uri.fsPath, matcher);
       const localFiles = Object.keys(localManifest.files);
 
+      // Get all local directories
+      const localDirectories = new Set<string>();
+      async function collectLocalDirs(dir: string, relBase = ""): Promise<void> {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isDirectory()) continue;
+          const rel = path.posix.join(relBase, e.name);
+          const abs = path.join(dir, e.name);
+          if (matcher(rel, true)) continue; // Skip ignored directories
+          localDirectories.add(rel);
+          await collectLocalDirs(abs, rel); // Recursively collect subdirectories
+        }
+      }
+      await collectLocalDirs(ws.uri.fsPath);
+
       progress.report({ message: "Reading board files..." });
 
       // Get all board files and sizes in one optimized call
@@ -658,6 +673,7 @@ export class BoardOperations {
 
       const diffSet = new Set<string>(); // Changed files (exist in both but different)
       const localOnlySet = new Set<string>(); // Files that exist locally but not on board
+      const localOnlyDirectories = new Set<string>(); // Directories that exist locally but not on board
       const boardOnlySet = new Set<string>(); // Files that exist on board but not locally
 
       // Batch process local files to get their sizes
@@ -704,32 +720,46 @@ export class BoardOperations {
         }
       }
 
+      // Find directories that exist locally but not on board
+      for (const localDir of localDirectories) {
+        const devicePath = this.toDevicePath(localDir, rootPath);
+        const existsOnBoard = boardDirectories.has(devicePath);
+        if (!existsOnBoard) {
+          console.log(`[DEBUG] checkDiffs: Adding local-only directory: localDir=${localDir}, devicePath=${devicePath}`);
+          localOnlyDirectories.add(devicePath);
+        }
+      }
+
       progress.report({ message: "Processing results..." });
 
       // Store original file-only sets for sync operations
       const originalDiffSet = new Set(diffSet);
       const originalLocalOnlySet = new Set(localOnlySet);
+      const originalLocalOnlyDirectories = new Set(localOnlyDirectories);
       const originalBoardOnlySet = new Set(boardOnlySet);
 
       // Set decorations (simplified - no parent directory marking)
       this.decorations.setDiffs(diffSet);
       this.decorations.setLocalOnly(localOnlySet);
+      this.decorations.setLocalOnlyDirectories(localOnlyDirectories);
       this.decorations.setBoardOnly(boardOnlySet);
 
       // Store original file-only sets for sync operations
       (this.decorations as any)._originalDiffs = originalDiffSet;
       (this.decorations as any)._originalLocalOnly = originalLocalOnlySet;
+      (this.decorations as any)._originalLocalOnlyDirectories = originalLocalOnlyDirectories;
       (this.decorations as any)._originalBoardOnly = originalBoardOnlySet;
 
       // Automatic sync will refresh the tree
 
       const changedFilesCount = originalDiffSet.size;
       const localOnlyFilesCount = originalLocalOnlySet.size;
+      const localOnlyDirectoriesCount = originalLocalOnlyDirectories.size;
       const boardOnlyFilesCount = originalBoardOnlySet.size;
-      const totalFilesFlagged = changedFilesCount + localOnlyFilesCount + boardOnlyFilesCount;
+      const totalFilesFlagged = changedFilesCount + localOnlyFilesCount + localOnlyDirectoriesCount + boardOnlyFilesCount;
 
       vscode.window.showInformationMessage(
-        `Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only, ${boardOnlyFilesCount} board-only, ${totalFilesFlagged} total files)`
+        `Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only files, ${localOnlyDirectoriesCount} local-only folders, ${boardOnlyFilesCount} board-only, ${totalFilesFlagged} total)`
       );
     });
 

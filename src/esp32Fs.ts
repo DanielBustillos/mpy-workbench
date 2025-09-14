@@ -172,6 +172,7 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
           const decorations = (global as any).esp32Decorations;
           if (decorations) {
             const localOnlyFiles = decorations.getLocalOnly();
+            const localOnlyDirectories = decorations.getLocalOnlyDirectories();
             const currentPathPrefix = path === "/" ? "/" : path + "/";
 
             // Collect direct children that should be added
@@ -194,6 +195,21 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
                   const parentPath = currentPathPrefix + parentDir;
                   if (!itemsToAdd.has(parentDir) && !nodes.some(n => n.name === parentDir)) {
                     itemsToAdd.set(parentDir, { path: parentPath, isDir: true });
+                  }
+                }
+              }
+            }
+
+            // Find local-only directories that should appear in this directory
+            for (const localOnlyDirPath of localOnlyDirectories) {
+              if (localOnlyDirPath.startsWith(currentPathPrefix)) {
+                const remainingPath = localOnlyDirPath.slice(currentPathPrefix.length);
+                // Only process direct children (no deeper nested paths)
+                if (remainingPath && !remainingPath.includes('/')) {
+                  // Check if this directory is not already in the board entries
+                  const alreadyExists = nodes.some(n => n.name === remainingPath);
+                  if (!alreadyExists) {
+                    itemsToAdd.set(remainingPath, { path: localOnlyDirPath, isDir: true });
                   }
                 }
               }

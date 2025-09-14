@@ -7,6 +7,7 @@ export class Esp32DecorationProvider implements vscode.FileDecorationProvider {
   private diffSet = new Set<string>(); // device absolute paths like /code/main.py and dirs (changed files)
   private localOnlySet = new Set<string>(); // device paths for files that exist locally but not on board
   private boardOnlySet = new Set<string>(); // device paths for files that exist on board but not locally
+  private localOnlyDirectories = new Set<string>(); // device paths for directories that exist locally but not on board
 
   setDiffs(paths: Iterable<string>) {
     this.diffSet = new Set(paths);
@@ -23,10 +24,16 @@ export class Esp32DecorationProvider implements vscode.FileDecorationProvider {
     this._onDidChange.fire(undefined);
   }
 
+  setLocalOnlyDirectories(paths: Iterable<string>) {
+    this.localOnlyDirectories = new Set(paths);
+    this._onDidChange.fire(undefined);
+  }
+
   clear() {
     this.diffSet.clear();
     this.localOnlySet.clear();
     this.boardOnlySet.clear();
+    this.localOnlyDirectories.clear();
     (this as any)._originalDiffs = undefined;
     (this as any)._originalLocalOnly = undefined;
     (this as any)._originalBoardOnly = undefined;
@@ -39,6 +46,10 @@ export class Esp32DecorationProvider implements vscode.FileDecorationProvider {
 
   getLocalOnly(): string[] {
     return Array.from(this.localOnlySet);
+  }
+
+  getLocalOnlyDirectories(): string[] {
+    return Array.from(this.localOnlyDirectories);
   }
 
   // Get only files (no parent directories) for sync operations
@@ -62,6 +73,12 @@ export class Esp32DecorationProvider implements vscode.FileDecorationProvider {
     if (uri.scheme !== 'esp32') return undefined;
     const p = uri.path; // like /code/main.py
 
+    // Check for local-only directories first (more specific)
+    if (this.localOnlyDirectories.has(p)) {
+      return { badge: '?', tooltip: 'Local-only folder', color: new vscode.ThemeColor('descriptionForeground') };
+    }
+
+    // Check for local-only files
     if (this.localOnlySet.has(p)) {
       return { badge: '?', tooltip: 'Only in local', color: new vscode.ThemeColor('descriptionForeground') };
     }

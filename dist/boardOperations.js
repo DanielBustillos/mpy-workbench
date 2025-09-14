@@ -564,6 +564,22 @@ class BoardOperations {
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
             const localManifest = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher);
             const localFiles = Object.keys(localManifest.files);
+            // Get all local directories
+            const localDirectories = new Set();
+            async function collectLocalDirs(dir, relBase = "") {
+                const entries = await fs.readdir(dir, { withFileTypes: true });
+                for (const e of entries) {
+                    if (!e.isDirectory())
+                        continue;
+                    const rel = path.posix.join(relBase, e.name);
+                    const abs = path.join(dir, e.name);
+                    if (matcher(rel, true))
+                        continue; // Skip ignored directories
+                    localDirectories.add(rel);
+                    await collectLocalDirs(abs, rel); // Recursively collect subdirectories
+                }
+            }
+            await collectLocalDirs(ws.uri.fsPath);
             progress.report({ message: "Reading board files..." });
             // Get all board files and sizes in one optimized call
             const boardData = await mp.getBoardFilesAndSizes(rootPath);
@@ -586,6 +602,7 @@ class BoardOperations {
             progress.report({ message: "Comparing files..." });
             const diffSet = new Set(); // Changed files (exist in both but different)
             const localOnlySet = new Set(); // Files that exist locally but not on board
+            const localOnlyDirectories = new Set(); // Directories that exist locally but not on board
             const boardOnlySet = new Set(); // Files that exist on board but not locally
             // Batch process local files to get their sizes
             const localFileSizes = new Map();
@@ -624,25 +641,38 @@ class BoardOperations {
                     boardOnlySet.add(boardFile.path);
                 }
             }
+            // Find directories that exist locally but not on board
+            for (const localDir of localDirectories) {
+                const devicePath = this.toDevicePath(localDir, rootPath);
+                const existsOnBoard = boardDirectories.has(devicePath);
+                if (!existsOnBoard) {
+                    console.log(`[DEBUG] checkDiffs: Adding local-only directory: localDir=${localDir}, devicePath=${devicePath}`);
+                    localOnlyDirectories.add(devicePath);
+                }
+            }
             progress.report({ message: "Processing results..." });
             // Store original file-only sets for sync operations
             const originalDiffSet = new Set(diffSet);
             const originalLocalOnlySet = new Set(localOnlySet);
+            const originalLocalOnlyDirectories = new Set(localOnlyDirectories);
             const originalBoardOnlySet = new Set(boardOnlySet);
             // Set decorations (simplified - no parent directory marking)
             this.decorations.setDiffs(diffSet);
             this.decorations.setLocalOnly(localOnlySet);
+            this.decorations.setLocalOnlyDirectories(localOnlyDirectories);
             this.decorations.setBoardOnly(boardOnlySet);
             // Store original file-only sets for sync operations
             this.decorations._originalDiffs = originalDiffSet;
             this.decorations._originalLocalOnly = originalLocalOnlySet;
+            this.decorations._originalLocalOnlyDirectories = originalLocalOnlyDirectories;
             this.decorations._originalBoardOnly = originalBoardOnlySet;
             // Automatic sync will refresh the tree
             const changedFilesCount = originalDiffSet.size;
             const localOnlyFilesCount = originalLocalOnlySet.size;
+            const localOnlyDirectoriesCount = originalLocalOnlyDirectories.size;
             const boardOnlyFilesCount = originalBoardOnlySet.size;
-            const totalFilesFlagged = changedFilesCount + localOnlyFilesCount + boardOnlyFilesCount;
-            vscode.window.showInformationMessage(`Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only, ${boardOnlyFilesCount} board-only, ${totalFilesFlagged} total files)`);
+            const totalFilesFlagged = changedFilesCount + localOnlyFilesCount + localOnlyDirectoriesCount + boardOnlyFilesCount;
+            vscode.window.showInformationMessage(`Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only files, ${localOnlyDirectoriesCount} local-only folders, ${boardOnlyFilesCount} board-only, ${totalFilesFlagged} total)`);
         });
         // Refresh tree to show decorations and clear cache for fresh device listing
         await vscode.commands.executeCommand("mpyWorkbench.refresh");

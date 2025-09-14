@@ -9,6 +9,7 @@ class Esp32DecorationProvider {
         this.diffSet = new Set(); // device absolute paths like /code/main.py and dirs (changed files)
         this.localOnlySet = new Set(); // device paths for files that exist locally but not on board
         this.boardOnlySet = new Set(); // device paths for files that exist on board but not locally
+        this.localOnlyDirectories = new Set(); // device paths for directories that exist locally but not on board
     }
     setDiffs(paths) {
         this.diffSet = new Set(paths);
@@ -22,10 +23,15 @@ class Esp32DecorationProvider {
         this.boardOnlySet = new Set(paths);
         this._onDidChange.fire(undefined);
     }
+    setLocalOnlyDirectories(paths) {
+        this.localOnlyDirectories = new Set(paths);
+        this._onDidChange.fire(undefined);
+    }
     clear() {
         this.diffSet.clear();
         this.localOnlySet.clear();
         this.boardOnlySet.clear();
+        this.localOnlyDirectories.clear();
         this._originalDiffs = undefined;
         this._originalLocalOnly = undefined;
         this._originalBoardOnly = undefined;
@@ -36,6 +42,9 @@ class Esp32DecorationProvider {
     }
     getLocalOnly() {
         return Array.from(this.localOnlySet);
+    }
+    getLocalOnlyDirectories() {
+        return Array.from(this.localOnlyDirectories);
     }
     // Get only files (no parent directories) for sync operations
     getDiffsFilesOnly() {
@@ -54,6 +63,11 @@ class Esp32DecorationProvider {
         if (uri.scheme !== 'esp32')
             return undefined;
         const p = uri.path; // like /code/main.py
+        // Check for local-only directories first (more specific)
+        if (this.localOnlyDirectories.has(p)) {
+            return { badge: '?', tooltip: 'Local-only folder', color: new vscode.ThemeColor('descriptionForeground') };
+        }
+        // Check for local-only files
         if (this.localOnlySet.has(p)) {
             return { badge: '?', tooltip: 'Only in local', color: new vscode.ThemeColor('descriptionForeground') };
         }
