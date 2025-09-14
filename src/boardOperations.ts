@@ -591,42 +591,7 @@ export class BoardOperations {
   }
 
   async checkDiffs(): Promise<void> {
-    console.log("[DEBUG] checkDiffs: Starting diff check with tree cache");
-
     const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-    const connect = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
-
-    // Generate comparison plan file before starting
-    await this.generateComparisonPlan(rootPath);
-
-    // Helper to convert local relative path to absolute path on board
-    const toDevicePath = (localRel: string) => {
-      console.log(`[DEBUG] checkDiffs: Converting local path ${localRel} to device path with rootPath ${rootPath}`);
-
-      // Normalize paths
-      const normalizedLocalPath = localRel.replace(/\/+/g, '/').replace(/\/$/, '');
-      const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
-
-      console.log(`[DEBUG] checkDiffs: Normalized paths - local: ${normalizedLocalPath}, root: ${normalizedRootPath}`);
-
-      // If root is just "/", add leading slash to local path
-      if (normalizedRootPath === "") {
-        const result = "/" + normalizedLocalPath;
-        console.log(`[DEBUG] checkDiffs: Root is /, result: ${result}`);
-        return result;
-      }
-
-      // If local path is empty, return root path
-      if (normalizedLocalPath === "") {
-        console.log(`[DEBUG] checkDiffs: Local path is empty, result: ${normalizedRootPath}`);
-        return normalizedRootPath;
-      }
-
-      // Combine root and local path
-      const result = normalizedRootPath + "/" + normalizedLocalPath;
-      console.log(`[DEBUG] checkDiffs: Combined paths, result: ${result}`);
-      return result;
-    };
 
     await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
@@ -665,274 +630,86 @@ export class BoardOperations {
       const localManifest = await buildManifest(ws.uri.fsPath, matcher);
       const localFiles = Object.keys(localManifest.files);
 
-      console.log(`[DEBUG] checkDiffs: Found ${localFiles.length} local files`);
+      progress.report({ message: "Reading board files..." });
 
-      progress.report({ message: "Reading board files from cache..." });
+      // Get all board files and sizes in one optimized call
+      const boardData = await mp.getBoardFilesAndSizes(rootPath);
+      const boardFiles = boardData.files;
+      const boardDirectories = boardData.directories;
 
-      // Clear cache first to ensure fresh data
-      console.log(`[DEBUG] checkDiffs: Clearing file tree cache before reading...`);
-      await mp.refreshFileTreeCache();
-
-      // Get device files from cache (much faster!)
-      const deviceStats = await mp.listTreeStats(rootPath); // This now uses cache
-      const deviceFiles = deviceStats.filter(e => !e.isDir);
-
-      console.log(`[DEBUG] checkDiffs: Found ${deviceFiles.length} device files from cache`);
-
-      // Helper to convert device path to local relative
-      const relFromDevice = (devicePath: string) => {
-        console.log(`[DEBUG] checkDiffs: Converting device path ${devicePath} with rootPath ${rootPath}`);
-
-        // Normalize paths to ensure consistent comparison
-        const normalizedDevicePath = devicePath.replace(/\/+/g, '/').replace(/\/$/, '');
-        const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
-
-        console.log(`[DEBUG] checkDiffs: Normalized paths - device: ${normalizedDevicePath}, root: ${normalizedRootPath}`);
-
-        // If root is just "/", remove leading slash from device path
-        if (normalizedRootPath === "") {
-          const result = normalizedDevicePath.replace(/^\//, "");
-          console.log(`[DEBUG] checkDiffs: Root is /, result: ${result}`);
-          return result;
+      // Filter board files based on ignore rules
+      const filteredBoardFiles = new Map<string, { size: number; isDir: boolean }>();
+      for (const [boardPath, info] of boardFiles) {
+        const relPath = this.relFromDevice(boardPath, rootPath);
+        if (!matcher(relPath, false)) {
+          filteredBoardFiles.set(boardPath, info);
         }
+      }
 
-        // If device path starts with root path, remove the root prefix
-        if (normalizedDevicePath.startsWith(normalizedRootPath + "/")) {
-          const result = normalizedDevicePath.slice(normalizedRootPath.length + 1);
-          console.log(`[DEBUG] checkDiffs: Path starts with root, result: ${result}`);
-          return result;
-        }
+      // Create reverse mapping for quick lookup by relative path
+      const boardFileByRelPath = new Map<string, { path: string; size: number; isDir: boolean }>();
+      for (const [boardPath, info] of filteredBoardFiles) {
+        const relPath = this.relFromDevice(boardPath, rootPath);
+        boardFileByRelPath.set(relPath, { path: boardPath, size: info.size, isDir: info.isDir });
+      }
 
-        // If device path equals root path, return empty string
-        if (normalizedDevicePath === normalizedRootPath) {
-          console.log(`[DEBUG] checkDiffs: Path equals root, result: ""`);
-          return "";
-        }
+      progress.report({ message: "Comparing files..." });
 
-        // Fallback: remove leading slash if present
-        const result = normalizedDevicePath.replace(/^\//, "");
-        console.log(`[DEBUG] checkDiffs: Fallback, result: ${result}`);
-        return result;
-      };
-
-      // Apply ignore rules to device files
-      const deviceFilesFiltered = deviceFiles.filter(f => {
-        const rel = relFromDevice(f.path);
-        const shouldIgnore = matcher(rel, false);
-        console.log(`[DEBUG] checkDiffs: Device file ${f.path} -> local relative: ${rel}, ignored: ${shouldIgnore}`);
-        return !shouldIgnore;
-      });
-
-      console.log(`[DEBUG] checkDiffs: After filtering: ${deviceFilesFiltered.length} device files`);
-
-      const deviceFileMap = new Map(deviceFilesFiltered.map(f => [relFromDevice(f.path), f]));
       const diffSet = new Set<string>(); // Changed files (exist in both but different)
       const localOnlySet = new Set<string>(); // Files that exist locally but not on board
       const boardOnlySet = new Set<string>(); // Files that exist on board but not locally
 
-      console.log(`[DEBUG] checkDiffs: Device file map keys:`, Array.from(deviceFileMap.keys()));
-      console.log(`[DEBUG] checkDiffs: Local files:`, localFiles);
-
-      // Show detailed comparison summary
-      console.log(`[DEBUG] checkDiffs: === COMPARISON SUMMARY ===`);
-      console.log(`[DEBUG] checkDiffs: Total local files: ${localFiles.length}`);
-      console.log(`[DEBUG] checkDiffs: Total device files: ${deviceFilesFiltered.length}`);
-      console.log(`[DEBUG] checkDiffs: Device file paths:`, deviceFilesFiltered.map(f => f.path));
-      console.log(`[DEBUG] checkDiffs: Device file keys (converted):`, Array.from(deviceFileMap.keys()));
-      console.log(`[DEBUG] checkDiffs: ========================`);
-
-      // Debug: Show first few device files with their converted paths
-      console.log(`[DEBUG] checkDiffs: First 10 device files with conversions:`);
-      deviceFilesFiltered.slice(0, 10).forEach(f => {
-        const rel = relFromDevice(f.path);
-        console.log(`[DEBUG] checkDiffs: Device: ${f.path} -> Local: ${rel}`);
-      });
-
-      progress.report({ message: "Comparing files..." });
-
-      // Compare local files with device files
-      console.log(`[DEBUG] checkDiffs: Starting comparison of ${localFiles.length} local files with ${deviceFilesFiltered.length} device files`);
+      // Batch process local files to get their sizes
+      const localFileSizes = new Map<string, number>();
+      const statPromises: Promise<void>[] = [];
 
       for (const localRel of localFiles) {
-        const deviceFile = deviceFileMap.get(localRel);
-        const abs = path.join(ws.uri.fsPath, ...localRel.split('/'));
+        const absPath = path.join(ws.uri.fsPath, ...localRel.split('/'));
+        statPromises.push(
+          fs.stat(absPath).then(stat => {
+            localFileSizes.set(localRel, stat.size);
+          }).catch(() => {
+            // File not accessible, treat as different
+            localFileSizes.set(localRel, -1);
+          })
+        );
+      }
 
-        console.log(`[DEBUG] checkDiffs: Comparing local file: ${localRel}`);
-        console.log(`[DEBUG] checkDiffs: Looking for device file with key: ${localRel}`);
-        console.log(`[DEBUG] checkDiffs: Device file found: ${!!deviceFile}`);
+      // Wait for all file stats to complete
+      await Promise.all(statPromises);
 
-        if (deviceFile) {
-          console.log(`[DEBUG] checkDiffs: ✓ MATCH FOUND - Local: ${localRel} -> Device: ${deviceFile.path}`);
-        } else {
-          console.log(`[DEBUG] checkDiffs: ✗ NO MATCH - Local: ${localRel} not found on device`);
-          console.log(`[DEBUG] checkDiffs: Available device keys (first 10):`, Array.from(deviceFileMap.keys()).slice(0, 10));
-          console.log(`[DEBUG] checkDiffs: Similar device keys:`, Array.from(deviceFileMap.keys()).filter(k => k.includes(localRel.split('/').pop() || '') || localRel.includes(k.split('/').pop() || '')));
-        }
+      // Compare files
+      for (const localRel of localFiles) {
+        const boardFile = boardFileByRelPath.get(localRel);
+        const localSize = localFileSizes.get(localRel) || -1;
 
-        if (deviceFile) {
-          try {
-            const st = await fs.stat(abs);
-
-            // Obtener SHA256 checksum del archivo local
-            console.log(`[DEBUG] checkDiffs: Calculating SHA256 for local file: ${abs}`);
-            const localShaResult = execSync(`shasum -a 256 "${abs}"`, {
-              encoding: 'utf8',
-              timeout: 10000
-            });
-            const localShaMatch = localShaResult.trim().match(/^([a-f0-9]{64})\s+/);
-            const localSha256 = localShaMatch ? localShaMatch[1] : null;
-
-            // Obtener SHA256 checksum del archivo en el board usando la nueva función
-            console.log(`[DEBUG] checkDiffs: Getting SHA256 from board for: ${deviceFile.path}`);
-            let boardSha256 = null;
-            let boardFileExists = true;
-
-            try {
-              // First check if file exists using the improved method
-              boardFileExists = await mp.fileExistsSha256(deviceFile.path);
-
-              if (boardFileExists) {
-                // If file exists, get its SHA256
-                const boardShaResult = execSync(`mpremote connect ${connect} fs sha256sum "${deviceFile.path}"`, {
-                  encoding: 'utf8',
-                  timeout: 15000
-                });
-
-                // Parsear la salida de mpremote fs sha256sum
-                // Formato: "sha256sum :filename\nhash_value"
-                const shaLines = boardShaResult.trim().split('\n');
-                for (const line of shaLines) {
-                  if (!line.includes('sha256sum') && line.trim()) {
-                    // Esta línea debería contener solo el hash
-                    const hashMatch = line.trim().match(/^([a-f0-9]{64})$/);
-                    if (hashMatch) {
-                      boardSha256 = hashMatch[1];
-                      break;
-                    }
-                  }
-                }
-              } else {
-                console.log(`[DEBUG] checkDiffs: File ${deviceFile.path} does not exist on board (confirmed by sha256sum)`);
-              }
-            } catch (shaError: any) {
-              const errorMessage = String(shaError.message || shaError).toLowerCase();
-              console.log(`[DEBUG] checkDiffs: Could not get SHA256 from board: ${errorMessage}`);
-
-              // Check for file not found errors
-              if (errorMessage.includes('no such file') ||
-                  errorMessage.includes('file not found') ||
-                  errorMessage.includes('does not exist') ||
-                  errorMessage.includes('mpremote: no device found') ||
-                  errorMessage.includes('device not found')) {
-                console.log(`[DEBUG] checkDiffs: File ${deviceFile.path} does not exist on board`);
-                boardFileExists = false;
-              }
-            }
-
-            console.log(`[DEBUG] checkDiffs: COMPARING - Local path: ${abs}, Board path: ${deviceFile.path}`);
-            console.log(`[DEBUG] checkDiffs: SHA256 comparison: local=${localSha256}, device=${boardSha256}, boardFileExists=${boardFileExists}`);
-
-            // If board file doesn't exist, mark as board-only (should be handled by the board-only logic below)
-            if (!boardFileExists) {
-              console.log(`[DEBUG] checkDiffs: Board file doesn't exist, will be handled by board-only logic: ${localRel}`);
-              // Don't add to diffSet here, let the board-only logic handle it
-            } else {
-              // Comparar usando SHA256 si está disponible
-              let filesAreSame = false;
-              if (localSha256 && boardSha256) {
-                filesAreSame = localSha256 === boardSha256;
-                console.log(`[DEBUG] checkDiffs: RESULT - SHA256 ${filesAreSame ? 'MATCH' : 'MISMATCH'}: ${localRel}`);
-              } else {
-                // Si no se pueden obtener checksums, marcar como diferentes para forzar sync
-                filesAreSame = false;
-                console.log(`[DEBUG] checkDiffs: RESULT - CANNOT COMPARE (missing SHA256): ${localRel}`);
-              }
-
-              if (!filesAreSame) {
-                diffSet.add(deviceFile.path);
-                console.log(`[DEBUG] checkDiffs: MARKED FOR SYNC - ${localRel}`);
-              } else {
-                console.log(`[DEBUG] checkDiffs: FILES IDENTICAL - ${localRel}`);
-              }
-            }
-          } catch (error) {
-            // Local file not accessible
-            diffSet.add(deviceFile.path);
-            console.log(`[DEBUG] checkDiffs: ERROR - Local file not accessible: ${abs}, error: ${error}`);
+        if (boardFile) {
+          // File exists on both sides - compare sizes
+          if (localSize !== boardFile.size) {
+            diffSet.add(boardFile.path);
           }
         } else {
-          console.log(`[DEBUG] checkDiffs: MISSING - Local file exists but not on board: ${abs}`);
-          // This is where the "exists locally but not on board" error comes from
+          // File exists locally but not on board
           const devicePath = this.toDevicePath(localRel, rootPath);
           localOnlySet.add(devicePath);
-          console.log(`[DEBUG] checkDiffs: ADDED TO LOCAL-ONLY: ${devicePath}`);
         }
       }
 
-      // Files on board that don't exist locally
-      for (const [rel, deviceFile] of deviceFileMap.entries()) {
-        if (!localFiles.includes(rel)) {
-          boardOnlySet.add(deviceFile.path);
-          console.log(`[DEBUG] checkDiffs: BOARD-ONLY - File exists on board but not locally: ${deviceFile.path} (local equivalent would be: ${rel})`);
-          console.log(`[DEBUG] checkDiffs: MARKED AS 'Only in board': ${deviceFile.path}`);
+      // Find files that exist on board but not locally
+      for (const [relPath, boardFile] of boardFileByRelPath) {
+        if (!localFiles.includes(relPath)) {
+          boardOnlySet.add(boardFile.path);
         }
       }
 
-      progress.report({ message: "Checking local-only files..." });
+      progress.report({ message: "Processing results..." });
 
-      // Files that exist locally but not on board
-      for (const localRel of localFiles) {
-        const deviceFile = deviceFileMap.get(localRel);
-        if (!deviceFile) {
-          const devicePath = toDevicePath(localRel);
-          const absLocalPath = path.join(ws.uri.fsPath, ...localRel.split('/'));
-          localOnlySet.add(devicePath);
-          console.log(`[DEBUG] checkDiffs: LOCAL-ONLY - File exists locally but not on board: ${absLocalPath} -> ${devicePath}`);
-        }
-      }
-
-      progress.report({ message: "Processing differences..." });
-
-      // Keep original sets for sync operations (files only)
+      // Store original file-only sets for sync operations
       const originalDiffSet = new Set(diffSet);
       const originalLocalOnlySet = new Set(localOnlySet);
       const originalBoardOnlySet = new Set(boardOnlySet);
 
-      // Mark parent dirs for any differing children (for decorations only)
-      const parents = new Set<string>();
-      for (const p of diffSet) {
-        let cur = p;
-        while (cur.includes('/')) {
-          cur = cur.substring(0, cur.lastIndexOf('/')) || '/';
-          parents.add(cur);
-          if (cur === '/' || cur === rootPath) break;
-        }
-      }
-      for (const d of parents) diffSet.add(d);
-
-      // Mark parent dirs for local-only files too
-      for (const p of localOnlySet) {
-        let cur = p;
-        while (cur.includes('/')) {
-          cur = cur.substring(0, cur.lastIndexOf('/')) || '/';
-          parents.add(cur);
-          if (cur === '/' || cur === rootPath) break;
-        }
-      }
-      for (const d of parents) localOnlySet.add(d);
-
-      // Mark parent dirs for board-only files
-      for (const p of boardOnlySet) {
-        let cur = p;
-        while (cur.includes('/')) {
-          cur = cur.substring(0, cur.lastIndexOf('/')) || '/';
-          parents.add(cur);
-          if (cur === '/' || cur === rootPath) break;
-        }
-      }
-      for (const d of parents) boardOnlySet.add(d);
-
-      // Set decorations with parent directories included
+      // Set decorations (simplified - no parent directory marking)
       this.decorations.setDiffs(diffSet);
       this.decorations.setLocalOnly(localOnlySet);
       this.decorations.setBoardOnly(boardOnlySet);
@@ -942,19 +719,12 @@ export class BoardOperations {
       (this.decorations as any)._originalLocalOnly = originalLocalOnlySet;
       (this.decorations as any)._originalBoardOnly = originalBoardOnlySet;
 
-      // Debug: Log what was found
-      console.log("Debug - checkDiffs results:");
-      console.log("- diffSet:", Array.from(diffSet));
-      console.log("- localOnlySet:", Array.from(localOnlySet));
-      console.log("- deviceFiles count:", deviceFiles.length, "(filtered:", deviceFilesFiltered.length, ")");
-      console.log("- localManifest files count:", Object.keys(localManifest.files).length);
-
-      // Refresh the tree view to show local-only files
+      // Refresh the tree view
       this.tree.refreshTree();
 
-      const changedFilesCount = (this.decorations as any)._originalDiffs ? (this.decorations as any)._originalDiffs.size : Array.from(diffSet).filter(p => !p.endsWith('/')).length;
-      const localOnlyFilesCount = (this.decorations as any)._originalLocalOnly ? (this.decorations as any)._originalLocalOnly.size : Array.from(localOnlySet).filter(p => !p.endsWith('/')).length;
-      const boardOnlyFilesCount = (this.decorations as any)._originalBoardOnly ? (this.decorations as any)._originalBoardOnly.size : Array.from(boardOnlySet).filter(p => !p.endsWith('/')).length;
+      const changedFilesCount = originalDiffSet.size;
+      const localOnlyFilesCount = originalLocalOnlySet.size;
+      const boardOnlyFilesCount = originalBoardOnlySet.size;
       const totalFilesFlagged = changedFilesCount + localOnlyFilesCount + boardOnlyFilesCount;
 
       vscode.window.showInformationMessage(

@@ -27,6 +27,8 @@ exports.listTreeStats = listTreeStats;
 exports.cancelAll = cancelAll;
 exports.healthCheck = healthCheck;
 exports.getConnectionStats = getConnectionStats;
+exports.getBoardFilesAndSizes = getBoardFilesAndSizes;
+exports.getBoardFileSizes = getBoardFileSizes;
 exports.cleanupConnections = cleanupConnections;
 async function mvOnDevice(src, dst) {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
@@ -934,9 +936,18 @@ async function deleteAny(p) {
     // Get connection info for optimization
     const connection = connectionManager.getConnection(connect);
     try {
-        // Use mpremote fs rm command which handles both files and directories recursively
+        // Check if the path is a directory to determine if we need recursive deletion
+        const fileInfo = await getFileInfo(p);
+        const isDirectory = fileInfo?.isDir || false;
+        // Use mpremote fs rm command with -r flag for directories, without for files
         const pathArg = p && p !== "/" ? p : "/";
-        await runMpremote(["connect", connect, "fs", "rm", pathArg], { retryOnFailure: true });
+        const args = ["connect", connect, "fs", "rm"];
+        // Add -r flag for directories to handle non-empty folders
+        if (isDirectory) {
+            args.push("-r");
+        }
+        args.push(pathArg);
+        await runMpremote(args, { retryOnFailure: true });
         // Invalidate cache since filesystem changed
         clearFileTreeCache();
     }
@@ -1249,6 +1260,104 @@ function getConnectionStats() {
         connectionManagerStats: connectionManager.getStats(),
         currentChildPid: currentChild?.pid
     };
+}
+// Optimized function to get both file list and sizes in one call
+async function getBoardFilesAndSizes(rootPath = "/") {
+    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
+    if (!connect || connect === "auto")
+        throw new Error("Select a specific serial port first");
+    try {
+        // Get tree output with sizes in one call
+        const { stdout } = await runMpremote(["connect", connect, "fs", "tree", "-s"], { retryOnFailure: true });
+        const files = new Map();
+        const directories = new Set();
+        const lines = String(stdout || "").split(/\r?\n/).filter(line => line.trim());
+        const pathStack = [];
+        // Regex for file with size: [   1234]  filename.ext
+        const fileRe = /^\[\s*(\d+)\s*\]\s+(.+)$/;
+        for (const line of lines) {
+            if (!line.trim() || line.includes('tree') || line === ':/')
+                continue;
+            // Determine level by counting indentation
+            let level = 0;
+            let pos = 0;
+            while (pos < line.length) {
+                const remaining = line.substring(pos);
+                if (remaining.startsWith('├──') || remaining.startsWith('└──')) {
+                    pos += 3;
+                    break;
+                }
+                else if (remaining.startsWith('│   ')) {
+                    level += 1;
+                    pos += 4;
+                }
+                else if (remaining.startsWith('    ')) {
+                    level += 1;
+                    pos += 4;
+                }
+                else {
+                    break;
+                }
+            }
+            const remaining = line.substring(pos).trim();
+            // Check if it's a file with size
+            const fileMatch = fileRe.exec(remaining);
+            if (fileMatch) {
+                const size = parseInt(fileMatch[1]);
+                const name = fileMatch[2].trim();
+                // Adjust path stack to current level
+                pathStack.splice(level);
+                // Build full path
+                let fullPath;
+                if (pathStack.length === 0) {
+                    fullPath = name;
+                }
+                else {
+                    fullPath = pathStack.join('/') + '/' + name;
+                }
+                // Ensure path starts with /
+                if (!fullPath.startsWith('/')) {
+                    fullPath = '/' + fullPath;
+                }
+                files.set(fullPath, { size, isDir: false });
+                continue;
+            }
+            // If not a file, it's a directory
+            const dirName = remaining.trim();
+            if (dirName) {
+                // Adjust path stack to current level
+                pathStack.splice(level);
+                // Build full path for directory
+                let dirPath;
+                if (pathStack.length === 0) {
+                    dirPath = dirName;
+                }
+                else {
+                    dirPath = pathStack.join('/') + '/' + dirName;
+                }
+                // Ensure path starts with /
+                if (!dirPath.startsWith('/')) {
+                    dirPath = '/' + dirPath;
+                }
+                directories.add(dirPath);
+                pathStack.push(dirName);
+            }
+        }
+        return { files, directories };
+    }
+    catch (error) {
+        console.error(`[DEBUG] getBoardFilesAndSizes: Failed to get file data:`, error);
+        throw error;
+    }
+}
+// Legacy function for backward compatibility
+async function getBoardFileSizes(rootPath = "/") {
+    const result = await getBoardFilesAndSizes(rootPath);
+    const fileSizes = new Map();
+    for (const [path, info] of result.files) {
+        fileSizes.set(path, info.size);
+    }
+    return fileSizes;
 }
 // Cleanup function for extension deactivation
 function cleanupConnections() {
