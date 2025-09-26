@@ -205,6 +205,14 @@ export function activate(context: vscode.ExtensionContext) {
   autoSyncStatus.tooltip = 'Toggle workspace Auto-Sync on Save';
   context.subscriptions.push(autoSyncStatus);
 
+  // Status bar item for canceling all tasks
+  const cancelTasksStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+  cancelTasksStatus.command = 'mpyWorkbench.cancelAllTasks';
+  cancelTasksStatus.tooltip = 'Cancel all running tasks';
+  cancelTasksStatus.text = 'MPY: Cancel';
+  cancelTasksStatus.color = new vscode.ThemeColor('statusBarItem.warningForeground');
+  context.subscriptions.push(cancelTasksStatus);
+
   async function refreshAutoSyncStatus() {
     try {
       const ws = vscode.workspace.workspaceFolders?.[0];
@@ -236,6 +244,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize status bar on activation
   refreshAutoSyncStatus();
+  cancelTasksStatus.show();
 
   // Ensure sensible ignore files exist or are upgraded from old stub
   try {
@@ -348,6 +357,23 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (error: any) {
         console.error("[DEBUG] Filesystem status debug failed:", error);
         vscode.window.showErrorMessage(`Filesystem status debug failed: ${error?.message || error}`);
+      }
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.cancelAllTasks", async () => {
+      try {
+        console.log("[DEBUG] Canceling all tasks...");
+
+        // Cancel current mpremote process
+        mp.cancelAll();
+
+        // Clear the operation queue by resetting it
+        opQueue = Promise.resolve();
+
+        vscode.window.showInformationMessage("All tasks have been canceled");
+        console.log("[DEBUG] All tasks canceled successfully");
+      } catch (error: any) {
+        console.error("[DEBUG] Failed to cancel tasks:", error);
+        vscode.window.showErrorMessage(`Failed to cancel tasks: ${error?.message || error}`);
       }
     }),
     vscode.commands.registerCommand("mpyWorkbench.pickPort", async () => {
@@ -1342,6 +1368,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
       const ws = vscode.workspace.getWorkspaceFolder(doc.uri);
       if (!ws) return;
+      // Only create .mpy-workbench directory if workspace is initialized
+      const initialized = await isLocalSyncInitialized();
+      if (!initialized) return;
       // ensure project config folder exists
   await ensureMpyWorkbenchDir(ws.uri.fsPath);
       const enabled = await workspaceAutoSyncEnabled(ws.uri.fsPath);
