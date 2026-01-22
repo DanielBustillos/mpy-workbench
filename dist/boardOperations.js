@@ -6,6 +6,7 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const mp = require("./mpremote");
 const sync_1 = require("./sync");
+const pathMapping_1 = require("./pathMapping");
 // Helper to get workspace folder or throw error
 function getWorkspaceFolder() {
     const ws = vscode.workspace.workspaceFolders?.[0];
@@ -17,7 +18,7 @@ function getWorkspaceFolder() {
 async function isLocalSyncInitialized() {
     try {
         const ws = getWorkspaceFolder();
-        const manifestPath = path.join(ws.uri.fsPath, '.mpy-workbench', 'esp32sync.json');
+        const manifestPath = path.join(ws.uri.fsPath, ".mpy-workbench", "esp32sync.json");
         await fs.access(manifestPath);
         return true;
     }
@@ -26,94 +27,101 @@ async function isLocalSyncInitialized() {
     }
 }
 // Helper for delays in retry logic
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Workspace-level config and manifest stored in .mpy-workbench/
-const MPY_WORKBENCH_DIR = '.mpy-workbench';
-const MPY_MANIFEST_FILE = 'esp32sync.json';
+const MPY_WORKBENCH_DIR = ".mpy-workbench";
+const MPY_MANIFEST_FILE = "esp32sync.json";
 async function ensureMpyWorkbenchDir(wsPath) {
     try {
         await fs.mkdir(path.join(wsPath, MPY_WORKBENCH_DIR), { recursive: true });
     }
-    catch { /* ignore */ }
+    catch {
+        /* ignore */
+    }
 }
 async function ensureWorkbenchIgnoreFile(wsPath) {
     try {
         await ensureMpyWorkbenchDir(wsPath);
-        const p = path.join(wsPath, MPY_WORKBENCH_DIR, '.mpyignore');
+        const p = path.join(wsPath, MPY_WORKBENCH_DIR, ".mpyignore");
         await fs.access(p);
     }
     catch {
         const content = buildDefaultMpyIgnoreContent();
         try {
-            await fs.writeFile(path.join(wsPath, MPY_WORKBENCH_DIR, '.mpyignore'), content, 'utf8');
+            await fs.writeFile(path.join(wsPath, MPY_WORKBENCH_DIR, ".mpyignore"), content, "utf8");
         }
         catch { }
     }
 }
 function buildDefaultMpyIgnoreContent() {
     return [
-        '# .mpyignore — default rules (similar to .gitignore). Adjust according to your project.',
-        '# Paths are relative to the workspace root.',
-        '',
-        '# VCS',
-        '.git/',
-        '.svn/',
-        '.hg/',
-        '',
-        '# IDE/Editor',
-        '.vscode/',
-        '.idea/',
-        '.vs/',
-        '',
-        '# SO',
-        '.DS_Store',
-        'Thumbs.db',
-        '',
-        '# Node/JS',
-        'node_modules/',
-        'dist/',
-        'out/',
-        'build/',
-        '.cache/',
-        'coverage/',
-        '.next/',
-        '.nuxt/',
-        '.svelte-kit/',
-        '.turbo/',
-        '.parcel-cache/',
-        '*.log',
-        'npm-debug.log*',
-        'yarn-debug.log*',
-        'yarn-error.log*',
-        'pnpm-debug.log*',
-        '',
-        '# Python',
-        '__pycache__/',
-        '*.py[cod]',
-        '*.pyo',
-        '*.pyd',
-        '.venv/',
-        'venv/',
-        '.env',
-        '.env.*',
-        '.mypy_cache/',
-        '.pytest_cache/',
-        '.coverage',
-        'coverage.xml',
-        '*.egg-info/',
-        '.tox/',
-        '',
-        '# Otros',
-        '*.swp',
-        '*.swo',
-        '',
-        '# MPY Workbench',
-        '.mpy-workbench/',
-        '/.mpy-workbench',
-        ''
-    ].join('\n');
+        "# .mpyignore — default rules (similar to .gitignore). Adjust according to your project.",
+        "# Paths are relative to the workspace root.",
+        "",
+        "# VCS",
+        ".git/",
+        ".svn/",
+        ".hg/",
+        "",
+        "# IDE/Editor",
+        ".vscode/",
+        ".idea/",
+        ".vs/",
+        "",
+        "# SO",
+        ".DS_Store",
+        "Thumbs.db",
+        "",
+        "# Node/JS",
+        "node_modules/",
+        "dist/",
+        "out/",
+        "build/",
+        ".cache/",
+        "coverage/",
+        ".next/",
+        ".nuxt/",
+        ".svelte-kit/",
+        ".turbo/",
+        ".parcel-cache/",
+        "*.log",
+        "npm-debug.log*",
+        "yarn-debug.log*",
+        "yarn-error.log*",
+        "pnpm-debug.log*",
+        "",
+        "# Python",
+        "__pycache__/",
+        "*.py[cod]",
+        "*.pyo",
+        "*.pyd",
+        ".venv/",
+        "venv/",
+        ".env",
+        ".env.*",
+        ".mypy_cache/",
+        ".pytest_cache/",
+        ".coverage",
+        "coverage.xml",
+        "*.egg-info/",
+        ".tox/",
+        "",
+        "# Otros",
+        "*.swp",
+        "*.swo",
+        "",
+        "# MPY Workbench",
+        ".mpy-workbench/",
+        "/.mpy-workbench",
+        "",
+    ].join("\n");
 }
-function toLocalRelative(devicePath, rootPath) {
+function toLocalRelative(devicePath, rootPath, pathMappings) {
+    // If path mappings are provided, use reverse mappings
+    if (pathMappings && pathMappings.length > 0) {
+        return (0, pathMapping_1.reversePathMappings)(devicePath, rootPath, pathMappings);
+    }
+    // Fallback to simple path conversion
     const normRoot = rootPath === "/" ? "/" : rootPath.replace(/\/$/, "");
     if (normRoot === "/")
         return devicePath.replace(/^\//, "");
@@ -132,20 +140,25 @@ class BoardOperations {
     }
     // Helper function for auto-suspend operations
     async withAutoSuspend(fn, opts = {}) {
-        const enabled = vscode.workspace.getConfiguration().get("mpyWorkbench.serialAutoSuspend", true);
+        const enabled = vscode.workspace
+            .getConfiguration()
+            .get("mpyWorkbench.serialAutoSuspend", true);
         // If auto-suspend disabled, run without suspend logic
         if (!enabled) {
             try {
                 return await fn();
             }
-            finally { }
+            finally {
+            }
         }
         // For now, just execute the function (auto-suspend logic would be implemented here)
         return await fn();
     }
     async syncBaseline() {
         try {
-            const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
+            const connect = vscode.workspace
+                .getConfiguration()
+                .get("mpyWorkbench.connect", "auto");
             const ws = vscode.workspace.workspaceFolders?.[0];
             if (!ws) {
                 vscode.window.showErrorMessage("No workspace folder open");
@@ -164,14 +177,16 @@ class BoardOperations {
                 await (0, sync_1.saveManifest)(manifestPath, initialManifest);
                 vscode.window.showInformationMessage("Local folder initialized for synchronization.");
             }
-            const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+            const rootPath = vscode.workspace
+                .getConfiguration()
+                .get("mpyWorkbench.rootPath", "/");
             const matcher2 = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
             const man = await (0, sync_1.buildManifest)(ws.uri.fsPath, matcher2);
             // Upload all files with progress using single mpremote fs cp command
             await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: "Uploading all files to board...",
-                cancellable: false
+                cancellable: false,
             }, async (progress, token) => {
                 const files = Object.keys(man.files);
                 const total = files.length;
@@ -179,30 +194,21 @@ class BoardOperations {
                     progress.report({ increment: 100, message: "No files to upload" });
                     return;
                 }
-                progress.report({ increment: 0, message: `Found ${total} files to upload` });
+                progress.report({
+                    increment: 0,
+                    message: `Found ${total} files to upload`,
+                });
                 await this.withAutoSuspend(async () => {
+                    // Read path mappings from workspace config
+                    const wsConfig = await (0, pathMapping_1.readWorkspaceConfig)(ws.uri.fsPath);
+                    const pathMappings = wsConfig.pathMappings;
                     // First, create all necessary directories on the device in hierarchical order
-                    progress.report({ increment: 5, message: "Creating directories on device..." });
-                    // Collect all unique directory paths that need to be created
-                    const allDirectories = new Set();
-                    for (const relativePath of files) {
-                        const devicePath = path.posix.join(rootPath, relativePath);
-                        const deviceDir = path.posix.dirname(devicePath);
-                        if (deviceDir !== '.' && deviceDir !== rootPath) {
-                            // Add all parent directories to the set
-                            let currentDir = deviceDir;
-                            while (currentDir !== rootPath && currentDir !== '/') {
-                                allDirectories.add(currentDir);
-                                currentDir = path.posix.dirname(currentDir);
-                            }
-                        }
-                    }
-                    // Sort directories by depth (shallowest first) to ensure parent directories are created before children
-                    const sortedDirectories = Array.from(allDirectories).sort((a, b) => {
-                        const depthA = a.split('/').filter(p => p).length;
-                        const depthB = b.split('/').filter(p => p).length;
-                        return depthA - depthB;
+                    progress.report({
+                        increment: 5,
+                        message: "Creating directories on device...",
                     });
+                    // Collect all unique directory paths that need to be created (using path mappings)
+                    const sortedDirectories = (0, pathMapping_1.getAllMappedDirectories)(files, rootPath, pathMappings);
                     console.log(`[DEBUG] syncBaseline: Need to create ${sortedDirectories.length} directories:`, sortedDirectories);
                     // Create directories in hierarchical order with retry logic
                     let createdCount = 0;
@@ -230,7 +236,7 @@ class BoardOperations {
                                 }
                                 else {
                                     // Wait a bit before retrying
-                                    await new Promise(resolve => setTimeout(resolve, 100));
+                                    await new Promise((resolve) => setTimeout(resolve, 100));
                                 }
                             }
                         }
@@ -293,12 +299,15 @@ class BoardOperations {
                         }
                         if (stillMissing.length > 0) {
                             console.error(`[DEBUG] syncBaseline: Still missing ${stillMissing.length} directories after retry:`, stillMissing);
-                            throw new Error(`Missing directories after retry: ${stillMissing.join(', ')}`);
+                            throw new Error(`Missing directories after retry: ${stillMissing.join(", ")}`);
                         }
                         console.log(`[DEBUG] syncBaseline: ✓ All directories now exist after retry`);
                     }
                     console.log(`[DEBUG] syncBaseline: ✓ All directories verified - proceeding with bulk upload`);
-                    progress.report({ increment: 10, message: "Starting bulk upload..." });
+                    progress.report({
+                        increment: 10,
+                        message: "Starting bulk upload...",
+                    });
                     // Use individual cp commands instead of bulk upload
                     console.log(`[DEBUG] syncBaseline: Using individual cp commands for upload`);
                     // Verify all local files exist before building command
@@ -332,7 +341,8 @@ class BoardOperations {
                     let failed = 0;
                     for (const relativePath of validFiles) {
                         const localPath = path.join(ws.uri.fsPath, relativePath);
-                        const devicePath = path.posix.join(rootPath, relativePath);
+                        // Apply path mappings to get the correct device path
+                        const devicePath = (0, pathMapping_1.applyPathMappings)(relativePath, rootPath, pathMappings);
                         // Double-check file exists before attempting upload (in case it was deleted during the process)
                         try {
                             await fs.access(localPath);
@@ -345,8 +355,8 @@ class BoardOperations {
                         try {
                             console.log(`[DEBUG] syncBaseline: Individual upload ${uploaded + 1}/${actualTotal}: ${localPath} -> ${devicePath}`);
                             progress.report({
-                                increment: (80 / actualTotal),
-                                message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`
+                                increment: 80 / actualTotal,
+                                message: `Uploading ${relativePath} (${uploaded + 1}/${actualTotal})`,
                             });
                             // Use cpToDevice which includes directory creation logic
                             console.log(`[DEBUG] syncBaseline: Executing cpToDevice: ${localPath} -> ${devicePath}`);
@@ -366,7 +376,10 @@ class BoardOperations {
                     if (failed > 0) {
                         console.warn(`[DEBUG] syncBaseline: ${failed} files failed to upload individually`);
                     }
-                    progress.report({ increment: 100, message: "All files uploaded successfully" });
+                    progress.report({
+                        increment: 100,
+                        message: "All files uploaded successfully",
+                    });
                 });
             });
             // Save manifest locally only (no device manifest to avoid .mpy-workbench folder on board)
@@ -388,23 +401,34 @@ class BoardOperations {
             vscode.window.showErrorMessage("No workspace folder open");
             return;
         }
-        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        // Read path mappings from workspace config
+        const wsConfig = await (0, pathMapping_1.readWorkspaceConfig)(ws.uri.fsPath);
+        const pathMappings = wsConfig.pathMappings;
+        const rootPath = vscode.workspace
+            .getConfiguration()
+            .get("mpyWorkbench.rootPath", "/");
         const deviceStats = await this.withAutoSuspend(() => mp.listTreeStats(rootPath));
         const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
         const toDownload = deviceStats
-            .filter(stat => !stat.isDir)
-            .filter(stat => {
-            const rel = toLocalRelative(stat.path, rootPath);
+            .filter((stat) => !stat.isDir)
+            .filter((stat) => {
+            const rel = toLocalRelative(stat.path, rootPath, pathMappings);
             return !matcher(rel, false);
         });
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync all files (Board → Local)", cancellable: false }, async (progress) => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Board: Sync all files (Board → Local)",
+            cancellable: false,
+        }, async (progress) => {
             let done = 0;
             const total = toDownload.length;
             await this.withAutoSuspend(async () => {
                 for (const stat of toDownload) {
-                    const rel = toLocalRelative(stat.path, rootPath);
+                    const rel = toLocalRelative(stat.path, rootPath, pathMappings);
                     const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
-                    progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
+                    progress.report({
+                        message: `Downloading ${rel} (${++done}/${total})`,
+                    });
                     await fs.mkdir(path.dirname(abs), { recursive: true });
                     await mp.cpFromDevice(stat.path, abs);
                     this.tree.addNode(stat.path, false); // Add downloaded file to tree
@@ -429,14 +453,17 @@ class BoardOperations {
             // Get device files
             await mp.refreshFileTreeCache();
             const deviceStats = await mp.listTreeStats(rootPath);
-            const deviceFiles = deviceStats.filter(e => !e.isDir);
+            const deviceFiles = deviceStats.filter((e) => !e.isDir);
             // Apply ignore rules to device files
-            const deviceFilesFiltered = deviceFiles.filter(f => {
+            const deviceFilesFiltered = deviceFiles.filter((f) => {
                 const rel = this.relFromDevice(f.path, rootPath);
                 const shouldIgnore = matcher(rel, false);
                 return !shouldIgnore;
             });
-            const deviceFileMap = new Map(deviceFilesFiltered.map(f => [this.relFromDevice(f.path, rootPath), f]));
+            const deviceFileMap = new Map(deviceFilesFiltered.map((f) => [
+                this.relFromDevice(f.path, rootPath),
+                f,
+            ]));
             // Generate comparison plan
             const comparisonPlan = {
                 timestamp: new Date().toISOString(),
@@ -445,14 +472,14 @@ class BoardOperations {
                 summary: {
                     localFilesCount: localFiles.length,
                     deviceFilesCount: deviceFilesFiltered.length,
-                    totalComparisons: localFiles.length + deviceFilesFiltered.length
+                    totalComparisons: localFiles.length + deviceFilesFiltered.length,
                 },
-                comparisons: []
+                comparisons: [],
             };
             // Files that exist locally - will be compared
             for (const localRel of localFiles) {
                 const deviceFile = deviceFileMap.get(localRel);
-                const absLocalPath = path.join(ws.uri.fsPath, ...localRel.split('/'));
+                const absLocalPath = path.join(ws.uri.fsPath, ...localRel.split("/"));
                 if (deviceFile) {
                     // File exists in both places - will be compared
                     comparisonPlan.comparisons.push({
@@ -461,7 +488,7 @@ class BoardOperations {
                         localRelative: localRel,
                         boardPath: deviceFile.path,
                         expectedAction: "compare_sizes",
-                        status: "will_compare"
+                        status: "will_compare",
                     });
                 }
                 else {
@@ -473,34 +500,34 @@ class BoardOperations {
                         localRelative: localRel,
                         boardPath: devicePath,
                         expectedAction: "mark_as_local_only",
-                        status: "will_add_to_local_only"
+                        status: "will_add_to_local_only",
                     });
                 }
             }
             // Files that exist on board but not locally
             for (const [rel, deviceFile] of deviceFileMap.entries()) {
                 if (!localFiles.includes(rel)) {
-                    const absLocalPath = path.join(ws.uri.fsPath, ...rel.split('/'));
+                    const absLocalPath = path.join(ws.uri.fsPath, ...rel.split("/"));
                     comparisonPlan.comparisons.push({
                         type: "board_only",
                         localPath: absLocalPath,
                         localRelative: rel,
                         boardPath: deviceFile.path,
                         expectedAction: "mark_as_different",
-                        status: "will_add_to_differences"
+                        status: "will_add_to_differences",
                     });
                 }
             }
             // Save comparison plan to file
-            const planFilePath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, 'comparison_plan.json');
+            const planFilePath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, "comparison_plan.json");
             await fs.mkdir(path.dirname(planFilePath), { recursive: true });
-            await fs.writeFile(planFilePath, JSON.stringify(comparisonPlan, null, 2), 'utf8');
+            await fs.writeFile(planFilePath, JSON.stringify(comparisonPlan, null, 2), "utf8");
             console.log(`[DEBUG] checkDiffs: Comparison plan saved to: ${planFilePath}`);
             console.log(`[DEBUG] checkDiffs: Plan includes ${comparisonPlan.comparisons.length} file operations`);
             // Show summary in console
-            const compareCount = comparisonPlan.comparisons.filter(c => c.type === "comparison").length;
-            const localOnlyCount = comparisonPlan.comparisons.filter(c => c.type === "local_only").length;
-            const boardOnlyCount = comparisonPlan.comparisons.filter(c => c.type === "board_only").length;
+            const compareCount = comparisonPlan.comparisons.filter((c) => c.type === "comparison").length;
+            const localOnlyCount = comparisonPlan.comparisons.filter((c) => c.type === "local_only").length;
+            const boardOnlyCount = comparisonPlan.comparisons.filter((c) => c.type === "board_only").length;
             console.log(`[DEBUG] checkDiffs: Plan Summary:`);
             console.log(`[DEBUG] checkDiffs: - Files to compare: ${compareCount}`);
             console.log(`[DEBUG] checkDiffs: - Local-only files: ${localOnlyCount}`);
@@ -520,9 +547,16 @@ class BoardOperations {
             return "";
         return devicePath.replace(/^\//, "");
     }
-    toDevicePath(localRel, rootPath) {
-        const normalizedLocalPath = localRel.replace(/\/+/g, '/').replace(/\/$/, '');
-        const normalizedRootPath = rootPath.replace(/\/+/g, '/').replace(/\/$/, '');
+    toDevicePath(localRel, rootPath, pathMappings) {
+        // If path mappings are provided, use them
+        if (pathMappings && pathMappings.length > 0) {
+            return (0, pathMapping_1.applyPathMappings)(localRel, rootPath, pathMappings);
+        }
+        // Fallback to simple path joining
+        const normalizedLocalPath = localRel
+            .replace(/\/+/g, "/")
+            .replace(/\/$/, "");
+        const normalizedRootPath = rootPath.replace(/\/+/g, "/").replace(/\/$/, "");
         if (normalizedRootPath === "") {
             return "/" + normalizedLocalPath;
         }
@@ -535,15 +569,23 @@ class BoardOperations {
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: "Checking file differences...",
-            cancellable: false
+            cancellable: false,
         }, async (progress) => {
             const ws = vscode.workspace.workspaceFolders?.[0];
             if (!ws) {
                 vscode.window.showErrorMessage("No workspace folder open");
                 return;
             }
-            const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+            // Read path mappings from workspace config
+            const wsConfig = await (0, pathMapping_1.readWorkspaceConfig)(ws.uri.fsPath);
+            const pathMappings = wsConfig.pathMappings;
+            const rootPath = vscode.workspace
+                .getConfiguration()
+                .get("mpyWorkbench.rootPath", "/");
             console.log(`[DEBUG] checkDiffs: rootPath: ${rootPath}`);
+            if (pathMappings) {
+                console.log(`[DEBUG] checkDiffs: pathMappings: ${JSON.stringify(pathMappings)}`);
+            }
             // Check if workspace is initialized for sync
             const initialized = await isLocalSyncInitialized();
             if (!initialized) {
@@ -596,7 +638,11 @@ class BoardOperations {
             const boardFileByRelPath = new Map();
             for (const [boardPath, info] of filteredBoardFiles) {
                 const relPath = this.relFromDevice(boardPath, rootPath);
-                boardFileByRelPath.set(relPath, { path: boardPath, size: info.size, isDir: info.isDir });
+                boardFileByRelPath.set(relPath, {
+                    path: boardPath,
+                    size: info.size,
+                    isDir: info.isDir,
+                });
             }
             progress.report({ message: "Comparing files..." });
             const diffSet = new Set(); // Changed files (exist in both but different)
@@ -607,10 +653,13 @@ class BoardOperations {
             const localFileSizes = new Map();
             const statPromises = [];
             for (const localRel of localFiles) {
-                const absPath = path.join(ws.uri.fsPath, ...localRel.split('/'));
-                statPromises.push(fs.stat(absPath).then(stat => {
+                const absPath = path.join(ws.uri.fsPath, ...localRel.split("/"));
+                statPromises.push(fs
+                    .stat(absPath)
+                    .then((stat) => {
                     localFileSizes.set(localRel, stat.size);
-                }).catch(() => {
+                })
+                    .catch(() => {
                     // File not accessible, treat as different
                     localFileSizes.set(localRel, -1);
                 }));
@@ -629,7 +678,7 @@ class BoardOperations {
                 }
                 else {
                     // File exists locally but not on board
-                    const devicePath = this.toDevicePath(localRel, rootPath);
+                    const devicePath = this.toDevicePath(localRel, rootPath, pathMappings);
                     console.log(`[DEBUG] checkDiffs: Adding local-only: localRel=${localRel}, devicePath=${devicePath}`);
                     localOnlySet.add(devicePath);
                 }
@@ -642,7 +691,7 @@ class BoardOperations {
             }
             // Find directories that exist locally but not on board
             for (const localDir of localDirectories) {
-                const devicePath = this.toDevicePath(localDir, rootPath);
+                const devicePath = this.toDevicePath(localDir, rootPath, pathMappings);
                 const existsOnBoard = boardDirectories.has(devicePath);
                 if (!existsOnBoard) {
                     console.log(`[DEBUG] checkDiffs: Adding local-only directory: localDir=${localDir}, devicePath=${devicePath}`);
@@ -663,14 +712,18 @@ class BoardOperations {
             // Store original file-only sets for sync operations
             this.decorations._originalDiffs = originalDiffSet;
             this.decorations._originalLocalOnly = originalLocalOnlySet;
-            this.decorations._originalLocalOnlyDirectories = originalLocalOnlyDirectories;
+            this.decorations._originalLocalOnlyDirectories =
+                originalLocalOnlyDirectories;
             this.decorations._originalBoardOnly = originalBoardOnlySet;
             // Automatic sync will refresh the tree
             const changedFilesCount = originalDiffSet.size;
             const localOnlyFilesCount = originalLocalOnlySet.size;
             const localOnlyDirectoriesCount = originalLocalOnlyDirectories.size;
             const boardOnlyFilesCount = originalBoardOnlySet.size;
-            const totalFilesFlagged = changedFilesCount + localOnlyFilesCount + localOnlyDirectoriesCount + boardOnlyFilesCount;
+            const totalFilesFlagged = changedFilesCount +
+                localOnlyFilesCount +
+                localOnlyDirectoriesCount +
+                boardOnlyFilesCount;
             vscode.window.showInformationMessage(`Board: Diff check complete (${changedFilesCount} changed, ${localOnlyFilesCount} local-only files, ${localOnlyDirectoriesCount} local-only folders, ${boardOnlyFilesCount} board-only, ${totalFilesFlagged} total)`);
         });
         // Refresh tree to show decorations and clear cache for fresh device listing
@@ -682,6 +735,9 @@ class BoardOperations {
             vscode.window.showErrorMessage("No workspace folder open");
             return;
         }
+        // Read path mappings from workspace config
+        const wsConfig = await (0, pathMapping_1.readWorkspaceConfig)(ws.uri.fsPath);
+        const pathMappings = wsConfig.pathMappings;
         const initialized = await isLocalSyncInitialized();
         if (!initialized) {
             const initialize = await vscode.window.showWarningMessage("The local folder is not initialized for synchronization. Would you like to initialize it now?", { modal: true }, "Initialize");
@@ -695,7 +751,9 @@ class BoardOperations {
             await (0, sync_1.saveManifest)(manifestPath, initialManifest);
             vscode.window.showInformationMessage("Local folder initialized for synchronization.");
         }
-        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        const rootPath = vscode.workspace
+            .getConfiguration()
+            .get("mpyWorkbench.rootPath", "/");
         // Get current diffs and filter to files by comparing with current device stats
         // Check if differences have been detected first
         const allDiffs = this.decorations.getDiffsFilesOnly();
@@ -717,8 +775,10 @@ class BoardOperations {
             }
         }
         const deviceStats = await this.withAutoSuspend(() => mp.listTreeStats(rootPath));
-        const filesSet = new Set(deviceStats.filter(e => !e.isDir).map(e => e.path));
-        const diffs = this.decorations.getDiffsFilesOnly().filter(p => filesSet.has(p));
+        const filesSet = new Set(deviceStats.filter((e) => !e.isDir).map((e) => e.path));
+        const diffs = this.decorations
+            .getDiffsFilesOnly()
+            .filter((p) => filesSet.has(p));
         const localOnlyFiles = this.decorations.getLocalOnlyFilesOnly();
         // Debug: Log what sync found
         console.log("Debug - syncDiffsLocalToBoard:");
@@ -731,15 +791,19 @@ class BoardOperations {
             vscode.window.showInformationMessage("Board: No diffed files to sync");
             return;
         }
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync Files Local → Board", cancellable: false }, async (progress) => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Board: Sync Files Local → Board",
+            cancellable: false,
+        }, async (progress) => {
             let done = 0;
             const total = allFilesToSync.length;
             await this.withAutoSuspend(async () => {
                 for (const devicePath of allFilesToSync) {
                     console.log(`[DEBUG] syncDiffsLocalToBoard: Processing devicePath: ${devicePath}, rootPath: ${rootPath}`);
-                    const rel = toLocalRelative(devicePath, rootPath);
+                    const rel = toLocalRelative(devicePath, rootPath, pathMappings);
                     console.log(`[DEBUG] syncDiffsLocalToBoard: rel: ${rel}`);
-                    const abs = path.join(ws.uri.fsPath, ...rel.split('/'));
+                    const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
                     console.log(`[DEBUG] syncDiffsLocalToBoard: abs: ${abs}`);
                     try {
                         await fs.access(abs);
@@ -756,7 +820,9 @@ class BoardOperations {
                     }
                     const isLocalOnly = localOnlyFiles.includes(devicePath);
                     const action = isLocalOnly ? "Uploading (new)" : "Uploading";
-                    progress.report({ message: `${action} ${rel} (${++done}/${total})` });
+                    progress.report({
+                        message: `${action} ${rel} (${++done}/${total})`,
+                    });
                     try {
                         await mp.uploadReplacing(abs, devicePath);
                         this.tree.addNode(devicePath, false); // Add uploaded file to tree
@@ -789,6 +855,9 @@ class BoardOperations {
             vscode.window.showErrorMessage("No workspace folder open");
             return;
         }
+        // Read path mappings from workspace config
+        const wsConfig = await (0, pathMapping_1.readWorkspaceConfig)(ws.uri.fsPath);
+        const pathMappings = wsConfig.pathMappings;
         const initialized = await isLocalSyncInitialized();
         if (!initialized) {
             const initialize = await vscode.window.showWarningMessage("The local folder is not initialized for synchronization. Would you like to initialize it now?", { modal: true }, "Initialize");
@@ -802,12 +871,18 @@ class BoardOperations {
             await (0, sync_1.saveManifest)(manifestPath, initialManifest);
             vscode.window.showInformationMessage("Local folder initialized for synchronization.");
         }
-        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        const rootPath = vscode.workspace
+            .getConfiguration()
+            .get("mpyWorkbench.rootPath", "/");
         // Get current diffs and filter to files by comparing with current device stats
         const deviceStats = await this.withAutoSuspend(() => mp.listTreeStats(rootPath));
-        const filesSet = new Set(deviceStats.filter(e => !e.isDir).map(e => e.path));
-        const diffs = this.decorations.getDiffsFilesOnly().filter(p => filesSet.has(p));
-        const boardOnlyFiles = this.decorations.getBoardOnlyFilesOnly().filter(p => filesSet.has(p));
+        const filesSet = new Set(deviceStats.filter((e) => !e.isDir).map((e) => e.path));
+        const diffs = this.decorations
+            .getDiffsFilesOnly()
+            .filter((p) => filesSet.has(p));
+        const boardOnlyFiles = this.decorations
+            .getBoardOnlyFilesOnly()
+            .filter((p) => filesSet.has(p));
         if (diffs.length === 0 && boardOnlyFiles.length === 0) {
             const localOnlyFiles = this.decorations.getLocalOnly();
             if (localOnlyFiles.length > 0) {
@@ -824,20 +899,26 @@ class BoardOperations {
             }
             return;
         }
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync Diffed Files Board → Local", cancellable: false }, async (progress) => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Board: Sync Diffed Files Board → Local",
+            cancellable: false,
+        }, async (progress) => {
             let done = 0;
             const matcher = await (0, sync_1.createIgnoreMatcher)(ws.uri.fsPath);
             const allFilesToDownload = [...diffs, ...boardOnlyFiles];
-            const filtered = allFilesToDownload.filter(devicePath => {
-                const rel = toLocalRelative(devicePath, rootPath);
+            const filtered = allFilesToDownload.filter((devicePath) => {
+                const rel = toLocalRelative(devicePath, rootPath, pathMappings);
                 return !matcher(rel, false);
             });
             const total = filtered.length;
             await this.withAutoSuspend(async () => {
                 for (const devicePath of filtered) {
-                    const rel = toLocalRelative(devicePath, rootPath);
-                    const abs = path.join(ws.uri.fsPath, ...rel.split('/'));
-                    progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
+                    const rel = toLocalRelative(devicePath, rootPath, pathMappings);
+                    const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+                    progress.report({
+                        message: `Downloading ${rel} (${++done}/${total})`,
+                    });
                     await fs.mkdir(path.dirname(abs), { recursive: true });
                     await mp.cpFromDevice(devicePath, abs);
                     this.tree.addNode(devicePath, false); // Add downloaded file to tree
@@ -857,7 +938,9 @@ class BoardOperations {
         if (node.kind !== "file")
             return;
         const ws = vscode.workspace.workspaceFolders?.[0];
-        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        const rootPath = vscode.workspace
+            .getConfiguration()
+            .get("mpyWorkbench.rootPath", "/");
         if (ws) {
             const rel = toLocalRelative(node.path, rootPath);
             const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
@@ -870,7 +953,10 @@ class BoardOperations {
             }
             else {
                 // For files that should exist on board, check if present locally first
-                const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
+                const fileExistsLocally = await fs
+                    .access(abs)
+                    .then(() => true)
+                    .catch(() => false);
                 if (!fileExistsLocally) {
                     console.log(`[DEBUG] openFile: File not found locally, copying from board: ${node.path} -> ${abs}`);
                     try {
@@ -897,7 +983,9 @@ class BoardOperations {
                 }
                 const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
                 await vscode.window.showTextDocument(doc, { preview: false });
-                await vscode.workspace.getConfiguration().update("mpyWorkbench.lastOpenedPath", abs);
+                await vscode.workspace
+                    .getConfiguration()
+                    .update("mpyWorkbench.lastOpenedPath", abs);
             }
             catch (openError) {
                 console.error(`[DEBUG] openFile: Failed to open local file:`, openError);
@@ -912,7 +1000,9 @@ class BoardOperations {
                 await this.withAutoSuspend(() => mp.cpFromDevice(node.path, temp.fsPath));
                 const doc = await vscode.workspace.openTextDocument(temp);
                 await vscode.window.showTextDocument(doc, { preview: true });
-                await vscode.workspace.getConfiguration().update("mpyWorkbench.lastOpenedPath", temp.fsPath);
+                await vscode.workspace
+                    .getConfiguration()
+                    .update("mpyWorkbench.lastOpenedPath", temp.fsPath);
             }
             catch (copyError) {
                 console.error(`[DEBUG] openFile: Failed to copy file to temp location:`, copyError);
@@ -921,8 +1011,15 @@ class BoardOperations {
         }
     }
     async mkdir(node) {
-        const base = node?.kind === "dir" ? node.path : (node ? path.posix.dirname(node.path) : "/");
-        const name = await vscode.window.showInputBox({ prompt: "New folder name", validateInput: v => v ? undefined : "Required" });
+        const base = node?.kind === "dir"
+            ? node.path
+            : node
+                ? path.posix.dirname(node.path)
+                : "/";
+        const name = await vscode.window.showInputBox({
+            prompt: "New folder name",
+            validateInput: (v) => (v ? undefined : "Required"),
+        });
         if (!name)
             return;
         const target = base === "/" ? `/${name}` : `${base}/${name}`;
@@ -937,13 +1034,16 @@ class BoardOperations {
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: `Deleting ${node.path}...`,
-            cancellable: false
+            cancellable: false,
         }, async (progress, token) => {
             progress.report({ increment: 0, message: "Starting deletion..." });
             try {
                 // Fast path: one-shot delete (file or directory)
                 const isDir = node.kind === "dir";
-                progress.report({ increment: 60, message: isDir ? "Removing directory..." : "Removing file..." });
+                progress.report({
+                    increment: 60,
+                    message: isDir ? "Removing directory..." : "Removing file...",
+                });
                 await this.withAutoSuspend(() => mp.deleteAny(node.path));
                 progress.report({ increment: 100, message: "Deletion complete!" });
                 vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);

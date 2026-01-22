@@ -51,6 +51,33 @@ The extension stores per-workspace settings and manifests inside a workspace fol
 
 Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or disable auto-sync for the current workspace. If no workspace config exists the extension falls back to the global setting `mpyWorkbench.autoSyncOnSave` (default: `false`).
 
+### Path Mappings
+
+You can configure path mappings to remap local directory paths to different paths on the ESP32 device. This is useful when your local project structure differs from the desired structure on the board.
+
+**Example configuration** (`.mpy-workbench/config.json`):
+
+```json
+{
+  "autoSyncOnSave": true,
+  "pathMappings": [
+    { "local": "src", "device": "/" },
+    { "local": "lib", "device": "/lib" }
+  ]
+}
+```
+
+With this configuration:
+- Local file `src/main.py` → Uploaded as `/main.py` on the ESP32
+- Local file `src/boot.py` → Uploaded as `/boot.py` on the ESP32
+- Local file `lib/utils.py` → Uploaded as `/lib/utils.py` on the ESP32
+
+**How path mappings work:**
+- The `local` path is the source directory in your workspace
+- The `device` path is the destination on the ESP32
+- Mappings are applied in order; the first matching mapping wins
+- Files not matching any mapping use the standard path joining behavior
+
 ## Python Requirements
 
 - **mpremote** — Used internally for all board operations (file management, REPL connection, command execution).
