@@ -8,6 +8,13 @@ tsconfig.json
 .vscodelocal/**
 node_modules/**
 
+.venv/**
+scripts/**
+.mpy-workbench/**
+src/**
+tsconfig.json
+**/*.map
+
 # Mantén solo lo necesario
 !dist/**
 !media/**
