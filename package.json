@@ -26,6 +26,7 @@
   ],
   "main": "./dist/extension.js",
   "scripts": {
+    "lint": "eslint src --ext ts",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
