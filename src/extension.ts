@@ -27,7 +27,8 @@ import {
   closeReplTerminal,
   openReplTerminal,
   toLocalRelative,
-  toDevicePath
+  toDevicePath,
+  clearRunFileTerminalIf
 } from "./mpremoteCommands";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -1406,6 +1407,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (terminal.name === "ESP32 REPL") {
         // replTerminal is now managed in mpremoteCommands.ts
       }
+      clearRunFileTerminalIf(terminal);
     })
   );
   // Command to toggle workspace-level autosync setting

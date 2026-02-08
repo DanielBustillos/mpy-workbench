@@ -1319,6 +1319,7 @@ function activate(context) {
         if (terminal.name === "ESP32 REPL") {
             // replTerminal is now managed in mpremoteCommands.ts
         }
+        (0, mpremoteCommands_1.clearRunFileTerminalIf)(terminal);
     }));
     // Command to toggle workspace-level autosync setting
     context.subscriptions.push(vscode.commands.registerCommand('mpyWorkbench.toggleWorkspaceAutoSync', async () => {

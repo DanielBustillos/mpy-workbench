@@ -7,6 +7,7 @@ exports.serialSendCtrlC = serialSendCtrlC;
 exports.stop = stop;
 exports.softReset = softReset;
 exports.runActiveFile = runActiveFile;
+exports.clearRunFileTerminalIf = clearRunFileTerminalIf;
 exports.getReplTerminal = getReplTerminal;
 exports.isReplOpen = isReplOpen;
 exports.closeReplTerminal = closeReplTerminal;
@@ -208,12 +209,25 @@ async function runActiveFile() {
             }
         }
     }
-    const runTerminal = vscode.window.createTerminal({
-        name: "ESP32 Run File",
-        cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    });
-    runTerminal.sendText(cmd, true);
-    runTerminal.show(true);
+    if (runFileTerminal) {
+        const alive = vscode.window.terminals.some(t => t === runFileTerminal);
+        if (!alive)
+            runFileTerminal = undefined;
+    }
+    if (!runFileTerminal) {
+        runFileTerminal = vscode.window.createTerminal({
+            name: "ESP32 Run File",
+            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        });
+    }
+    runFileTerminal.sendText(cmd, true);
+    runFileTerminal.show(true);
+}
+let runFileTerminal;
+/** Called when a terminal is closed; clears runFileTerminal if it was that terminal. */
+function clearRunFileTerminalIf(terminal) {
+    if (terminal === runFileTerminal)
+        runFileTerminal = undefined;
 }
 let replTerminal;
 async function getReplTerminal(context) {
