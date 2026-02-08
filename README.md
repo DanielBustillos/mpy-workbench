@@ -1,15 +1,15 @@
 
 # MPY Workbench — MicroPython file manager for VS Code
+**Professional MicroPython Tooling with Thonny’s Simplicity**
+
+
 ![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/DanielBucam.mpy-workbench)
 ![Installs](https://img.shields.io/visual-studio-marketplace/i/DanielBucam.mpy-workbench)
 ![Downloads](https://img.shields.io/visual-studio-marketplace/d/DanielBucam.mpy-workbench)
 ![License](https://img.shields.io/github/license/DanielBustillos/mpy-studio)
 ![mpremote](https://img.shields.io/badge/engine-mpremote-orange)
 
-
-Inspired by Thonny’s simplicity, this extension streamlines MicroPython development across multiple boards. It provides remote file management, an integrated REPL, and automatic two-way synchronization, enabling a smoother workflow within VS Code.
-
-The extension leverages **mpremote** for all board interactions, including file transfer, REPL connectivity, and command execution.
+**MPY Workbench** bridges the gap between the power of VS Code and the "it just works" experience of **Thonny**. Built on top of the official **mpremote** engine, it provides a stable, high-performance workflow for professional MicroPython development without the CLI friction.
 
 ## Main features
 
@@ -70,10 +70,16 @@ The Python path used by the extension can be adjusted in the extension settings 
 - 🔌 Add firmware flashing support for boards
 - 🪟 Perform full Windows testing: validate mpremote compatibility with COM ports and ensure consistent behavior of file operations and REPL across Windows environments  
 
-## Contributing
+🗺️ Roadmap & Current State
+Currently optimized and tested for ESP32-S3 and ESP32-C3.
+[ ] Full Windows validation (COM port consistency).
+[ ] Integrated firmware flashing.
+[ ] Expanded board support (RP2040, STM32).
+🤝 Contributing
+This project is in active development. I use it daily for my professional projects and aim to respond to issues and PRs quickly. If you find a bug or have a feature request, please open an issue.
 
-Issues and pull requests are welcome.
+License: MIT
+
 
 ## License
-
 MIT — see the `LICENSE` file in this repository.
