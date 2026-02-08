@@ -28,12 +28,6 @@ class SyncTree {
                 item.iconPath = new vscode.ThemeIcon("cloud-upload");
             if (element.id === "baselineFromBoard")
                 item.iconPath = new vscode.ThemeIcon("cloud-download");
-            if (element.id === "checkDiffs")
-                item.iconPath = new vscode.ThemeIcon("diff");
-            if (element.id === "syncDiffsLocalToBoard")
-                item.iconPath = new vscode.ThemeIcon("cloud-upload");
-            if (element.id === "syncDiffsBoardToLocal")
-                item.iconPath = new vscode.ThemeIcon("cloud-download");
             if (element.id === "deleteAllBoard")
                 item.iconPath = new vscode.ThemeIcon("trash", new vscode.ThemeColor("charts.red"));
         }
@@ -63,9 +57,6 @@ class SyncTree {
             { id: "toggleAutoSync", label: autoSyncLabel, command: "mpyWorkbench.toggleWorkspaceAutoSync" },
             { id: "baseline", label: "Upload all files (Local → Board)", command: "mpyWorkbench.syncBaseline" },
             { id: "baselineFromBoard", label: "Download all files (Board → Local)", command: "mpyWorkbench.syncBaselineFromBoard" },
-            { id: "checkDiffs", label: "Check for differences", command: "mpyWorkbench.checkDiffs" },
-            { id: "syncDiffsLocalToBoard", label: "Sync changed Files Local → Board", command: "mpyWorkbench.syncDiffsLocalToBoard" },
-            { id: "syncDiffsBoardToLocal", label: "Sync changed Files Board → Local", command: "mpyWorkbench.syncDiffsBoardToLocal" },
             { id: "deleteAllBoard", label: "Clear Device Files", command: "mpyWorkbench.deleteAllBoard" }
         ];
     }
