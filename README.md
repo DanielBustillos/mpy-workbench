@@ -4,7 +4,7 @@
 ![Installs](https://img.shields.io/visual-studio-marketplace/i/DanielBucam.mpy-workbench)
 ![Downloads](https://img.shields.io/visual-studio-marketplace/d/DanielBucam.mpy-workbench)
 ![License](https://img.shields.io/github/license/DanielBustillos/mpy-studio)
-![mpremote](https://img.shields.io/badge/engine-mpremote-orange)
+![CI Status](https://github.com/TU_USUARIO/TU_REPO/actions/workflows/ci.yml/badge.svg)
 
 
 Inspired by Thonny’s simplicity, this extension streamlines MicroPython development across multiple boards. It provides remote file management, an integrated REPL, and automatic two-way synchronization, enabling a smoother workflow within VS Code.
