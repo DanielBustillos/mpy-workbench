@@ -3,7 +3,7 @@
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via mpremote. Requires mpremote >= 1.26.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "DanielBucam",
   "engines": {
     "vscode": "^1.84.0"
@@ -167,21 +167,6 @@
         "icon": "$(cloud-upload)"
       },
       {
-        "command": "mpyWorkbench.checkDiffs",
-        "title": "MPY Workbench: Check files differences",
-        "icon": "$(diff)"
-      },
-      {
-        "command": "mpyWorkbench.syncDiffsLocalToBoard",
-        "title": "MPY Workbench: Sync changed Files Local → Board",
-        "icon": "$(export)"
-      },
-      {
-        "command": "mpyWorkbench.syncDiffsBoardToLocal",
-        "title": "MPY Workbench: Sync changed Files Board → Local",
-        "icon": "$(import)"
-      },
-      {
         "command": "mpyWorkbench.syncBaselineFromBoard",
         "title": "MPY Workbench: Sync all files (Board → Local)",
         "icon": "$(cloud-download)"
@@ -233,21 +218,6 @@
         "icon": "$(cloud-download)"
       },
       {
-        "command": "mpyWorkbench.checkDiffsFromView",
-        "title": "MPY Workbench: Check files differences (View)",
-        "icon": "$(diff)"
-      },
-      {
-        "command": "mpyWorkbench.syncDiffsLocalToBoardFromView",
-        "title": "MPY Workbench: Sync changed Files Local → Board (View)",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "mpyWorkbench.syncDiffsBoardToLocalFromView",
-        "title": "MPY Workbench: Sync changed Files Board → Local (View)",
-        "icon": "$(cloud-download)"
-      },
-      {
         "command": "mpyWorkbench.runActiveFileFromView",
         "title": "MPY Workbench: Run file (View)",
         "icon": "$(play)"
@@ -291,21 +261,6 @@
           "group": "navigation@1"
         },
         {
-          "command": "mpyWorkbench.checkDiffsFromView",
-          "when": "view == mpyWorkbenchSyncView",
-          "group": "navigation@3"
-        },
-        {
-          "command": "mpyWorkbench.syncDiffsLocalToBoardFromView",
-          "when": "view == mpyWorkbenchSyncView",
-          "group": "navigation@4"
-        },
-        {
-          "command": "mpyWorkbench.syncDiffsBoardToLocalFromView",
-          "when": "view == mpyWorkbenchSyncView",
-          "group": "navigation@5"
-        },
-        {
           "command": "mpyWorkbench.deleteAllBoardFromView",
           "when": "view == mpyWorkbenchSyncView",
           "group": "navigation@9"
@@ -334,11 +289,6 @@
           "command": "mpyWorkbench.pickPort",
           "when": "view == mpyWorkbenchFsView",
           "group": "navigation@1"
-        },
-        {
-          "command": "mpyWorkbench.checkDiffsFromView",
-          "when": "view == mpyWorkbenchSyncView",
-          "group": "navigation@3"
         }
       ],
       "view/item/context": [
