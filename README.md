@@ -29,9 +29,6 @@
 
 These commands perform full or incremental synchronization between your local workspace and the connected MicroPython board:
 
-- **Check for differences:** Lists new, changed, or deleted files between local and board.
-- **Sync Local → Board:** Uploads only local files that are new or modified.
-- **Sync Board → Local:** Downloads only board files that are new or modified.
 - **Upload all Local → Board:** Uploads all non-ignored local files to the device.
 - **Download all Board → Local:** Downloads all board files, overwriting local copies.
 - **Delete all files on board:** Removes all files on the device.
@@ -39,10 +36,6 @@ These commands perform full or incremental synchronization between your local wo
 ## Useful commands (Command Palette)
 
 - `MPY Workbench: Refresh` — refresh the file tree
-- `MPY Workbench: Check files differences` — show diffs and local-only files
-- `MPY Workbench: Sync changed Files (Local → Board)` — upload changed local files
-- `MPY Workbench: Sync changed Files (Board → Local)` — download changed board files
-- `MPY Workbench: Sync all files` — full upload or download
 - `MPY Workbench: Upload Active File` — upload the current editor file
 - `MPY Workbench: Select Serial Port` — pick device port
 - `MPY Workbench: Open REPL Terminal` — open MicroPython REPL
@@ -70,16 +63,16 @@ The Python path used by the extension can be adjusted in the extension settings 
 - 🔌 Add firmware flashing support for boards
 - 🪟 Perform full Windows testing: validate mpremote compatibility with COM ports and ensure consistent behavior of file operations and REPL across Windows environments  
 
-🗺️ Roadmap & Current State
+## 🗺️ Roadmap & Current State
 Currently optimized and tested for ESP32-S3 and ESP32-C3.
 [ ] Full Windows validation (COM port consistency).
 [ ] Integrated firmware flashing.
 [ ] Expanded board support (RP2040, STM32).
-🤝 Contributing
+
+## 🤝 Contributing
 This project is in active development. I use it daily for my professional projects and aim to respond to issues and PRs quickly. If you find a bug or have a feature request, please open an issue.
 
 License: MIT
-
 
 ## License
 MIT — see the `LICENSE` file in this repository.
