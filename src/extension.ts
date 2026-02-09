@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { Esp32Tree } from "./esp32Fs";
 import { ActionsTree } from "./actions";
 import { SyncTree } from "./syncView";
-import { LocalFilesTree } from "./localFilesView";
+import { LocalFilesTree, LocalFileNode } from "./localFilesView";
 import { Esp32Node } from "./types";
 import * as mp from "./mpremote";
 import { refreshFileTreeCache, debugTreeParsing, debugFilesystemStatus, runMpremote } from "./mpremote";
@@ -298,6 +298,32 @@ export function activate(context: vscode.ExtensionContext) {
     });
     return opQueue as Promise<T>;
   }
+
+  async function uploadLocalFolderToDevice(localDirPath: string, deviceBasePath: string): Promise<void> {
+    const folderName = path.basename(localDirPath);
+    const deviceDirPath = deviceBasePath === "/" || !deviceBasePath
+      ? `/${folderName}`
+      : `${deviceBasePath.replace(/\/$/, "")}/${folderName}`;
+    try {
+      await withAutoSuspend(() => mp.mkdir(deviceDirPath));
+    } catch (err: any) {
+      const msg = String(err?.message ?? err).toLowerCase();
+      if (!msg.includes("file exists") && !msg.includes("directory exists")) throw err;
+    }
+    tree.addNode(deviceDirPath, true);
+    const entries = await fs.readdir(localDirPath, { withFileTypes: true });
+    for (const e of entries) {
+      const entryAbs = path.join(localDirPath, e.name);
+      const deviceChildPath = deviceDirPath === "/" ? `/${e.name}` : `${deviceDirPath}/${e.name}`;
+      if (e.isDirectory()) {
+        await uploadLocalFolderToDevice(entryAbs, deviceDirPath);
+      } else if (e.isFile()) {
+        await withAutoSuspend(() => mp.cpToDevice(entryAbs, deviceChildPath));
+        tree.addNode(deviceChildPath, false);
+      }
+    }
+  }
+
   context.subscriptions.push(
     view,
     actionsView,
@@ -538,6 +564,29 @@ export function activate(context: vscode.ExtensionContext) {
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
         await vscode.window.showTextDocument(doc, { preview: false });
       } catch {}
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.uploadToBoard", async (node: LocalFileNode) => {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+      const devicePath = toDevicePath(node.relPath, rootPath);
+      try {
+        if (node.kind === "file") {
+          await withAutoSuspend(() => mp.cpToDevice(node.fsPath, devicePath));
+          tree.addNode(devicePath, false);
+          vscode.window.showInformationMessage(`Uploaded to board: ${node.relPath}`);
+        } else {
+          const deviceParent = path.posix.dirname(devicePath);
+          await uploadLocalFolderToDevice(node.fsPath, deviceParent);
+          vscode.window.showInformationMessage(`Uploaded folder to board: ${node.relPath}`);
+        }
+        tree.refreshTree();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Upload failed: ${err?.message ?? String(err)}`);
+      }
     }),
     vscode.commands.registerCommand("mpyWorkbench.setPort", async (port: string) => {
   await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);

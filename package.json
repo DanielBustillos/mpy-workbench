@@ -251,6 +251,11 @@
       {
         "command": "mpyWorkbench.toggleWorkspaceAutoSync",
         "title": "MPY Workbench: Toggle workspace Auto-Sync on Save"
+      },
+      {
+        "command": "mpyWorkbench.uploadToBoard",
+        "title": "Upload to board",
+        "icon": "$(cloud-upload)"
       }
     ],
     "menus": {
@@ -297,6 +302,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "mpyWorkbench.uploadToBoard",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "2_sync@1"
+        },
         {
           "command": "mpyWorkbench.renameNode",
           "when": "view == mpyWorkbenchFsView && (viewItem == file || viewItem == dir)",

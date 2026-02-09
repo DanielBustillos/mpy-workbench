@@ -283,6 +283,33 @@ function activate(context) {
         });
         return opQueue;
     }
+    async function uploadLocalFolderToDevice(localDirPath, deviceBasePath) {
+        const folderName = path.basename(localDirPath);
+        const deviceDirPath = deviceBasePath === "/" || !deviceBasePath
+            ? `/${folderName}`
+            : `${deviceBasePath.replace(/\/$/, "")}/${folderName}`;
+        try {
+            await withAutoSuspend(() => mp.mkdir(deviceDirPath));
+        }
+        catch (err) {
+            const msg = String(err?.message ?? err).toLowerCase();
+            if (!msg.includes("file exists") && !msg.includes("directory exists"))
+                throw err;
+        }
+        tree.addNode(deviceDirPath, true);
+        const entries = await fs.readdir(localDirPath, { withFileTypes: true });
+        for (const e of entries) {
+            const entryAbs = path.join(localDirPath, e.name);
+            const deviceChildPath = deviceDirPath === "/" ? `/${e.name}` : `${deviceDirPath}/${e.name}`;
+            if (e.isDirectory()) {
+                await uploadLocalFolderToDevice(entryAbs, deviceDirPath);
+            }
+            else if (e.isFile()) {
+                await withAutoSuspend(() => mp.cpToDevice(entryAbs, deviceChildPath));
+                tree.addNode(deviceChildPath, false);
+            }
+        }
+    }
     context.subscriptions.push(view, actionsView, syncView, localFilesView, vscode.commands.registerCommand("mpyWorkbench.refresh", () => {
         // Clear cache and force next listing to come from device
         tree.clearCache();
@@ -518,6 +545,30 @@ function activate(context) {
             await vscode.window.showTextDocument(doc, { preview: false });
         }
         catch { }
+    }), vscode.commands.registerCommand("mpyWorkbench.uploadToBoard", async (node) => {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (!ws) {
+            vscode.window.showErrorMessage("No workspace folder open");
+            return;
+        }
+        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        const devicePath = (0, mpremoteCommands_1.toDevicePath)(node.relPath, rootPath);
+        try {
+            if (node.kind === "file") {
+                await withAutoSuspend(() => mp.cpToDevice(node.fsPath, devicePath));
+                tree.addNode(devicePath, false);
+                vscode.window.showInformationMessage(`Uploaded to board: ${node.relPath}`);
+            }
+            else {
+                const deviceParent = path.posix.dirname(devicePath);
+                await uploadLocalFolderToDevice(node.fsPath, deviceParent);
+                vscode.window.showInformationMessage(`Uploaded folder to board: ${node.relPath}`);
+            }
+            tree.refreshTree();
+        }
+        catch (err) {
+            vscode.window.showErrorMessage(`Upload failed: ${err?.message ?? String(err)}`);
+        }
     }), vscode.commands.registerCommand("mpyWorkbench.setPort", async (port) => {
         await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);
         updatePortContext();
