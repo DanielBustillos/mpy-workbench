@@ -787,7 +787,60 @@ function activate(context) {
             console.error(`[DEBUG] Failed to upload active file to board:`, uploadError);
             vscode.window.showErrorMessage(`Failed to upload active file to board: ${uploadError?.message || uploadError}`);
         }
-    }), vscode.commands.registerCommand("mpyWorkbench.runActiveFile", mpremoteCommands_1.runActiveFile), vscode.commands.registerCommand("mpyWorkbench.mkdir", async (node) => {
+    }), vscode.commands.registerCommand("mpyWorkbench.runActiveFile", mpremoteCommands_1.runActiveFile), vscode.commands.registerCommand("mpyWorkbench.openFile", async (node) => {
+        if (node.kind !== "file")
+            return;
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
+        if (ws) {
+            const rel = (0, mpremoteCommands_1.toLocalRelative)(node.path, rootPath);
+            const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+            await fs.mkdir(path.dirname(abs), { recursive: true });
+            // Check if file is local-only (exists locally but not on board)
+            const isLocalOnly = node.isLocalOnly;
+            if (isLocalOnly) {
+                // For local-only files, just open the local file directly
+                console.log(`[DEBUG] openFile (extension): Opening local-only file: ${abs}`);
+            }
+            else {
+                // For files that should exist on board, check if present locally first
+                const fileExistsLocally = await fs.access(abs).then(() => true).catch(() => false);
+                if (!fileExistsLocally) {
+                    console.log(`[DEBUG] openFile (extension): File not found locally, copying from board: ${node.path} -> ${abs}`);
+                    try {
+                        await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+                        console.log(`[DEBUG] openFile (extension): Successfully copied file from board`);
+                    }
+                    catch (copyError) {
+                        console.error(`[DEBUG] openFile (extension): Failed to copy file from board:`, copyError);
+                        vscode.window.showErrorMessage(`Failed to copy file from board: ${copyError?.message || copyError}`);
+                        return; // Don't try to open the file if copy failed
+                    }
+                }
+                else {
+                    console.log(`[DEBUG] openFile (extension): File already exists locally: ${abs}`);
+                }
+            }
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
+            await vscode.window.showTextDocument(doc, { preview: false });
+            await context.workspaceState.update("mpyWorkbench.lastOpenedPath", abs);
+        }
+        else {
+            // Fallback: no workspace, use temp
+            const temp = vscode.Uri.joinPath(context.globalStorageUri, node.path.replace(/\//g, "_"));
+            await fs.mkdir(path.dirname(temp.fsPath), { recursive: true });
+            try {
+                await withAutoSuspend(() => mp.cpFromDevice(node.path, temp.fsPath));
+                const doc = await vscode.workspace.openTextDocument(temp);
+                await vscode.window.showTextDocument(doc, { preview: true });
+                await context.workspaceState.update("mpyWorkbench.lastOpenedPath", temp.fsPath);
+            }
+            catch (copyError) {
+                console.error(`[DEBUG] openFile (extension fallback): Failed to copy file to temp location:`, copyError);
+                vscode.window.showErrorMessage(`Failed to copy file from board to temp location: ${copyError?.message || copyError}`);
+            }
+        }
+    }), vscode.commands.registerCommand("mpyWorkbench.mkdir", async (node) => {
         const base = node?.kind === "dir" ? node.path : (node ? path.posix.dirname(node.path) : "/");
         const name = await vscode.window.showInputBox({ prompt: "New folder name", validateInput: v => v ? undefined : "Required" });
         if (!name)

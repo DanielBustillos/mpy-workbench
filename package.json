@@ -96,6 +96,10 @@
         "title": "MPY Workbench: Initialize Workspace"
       },
       {
+        "command": "mpyWorkbench.openFile",
+        "title": "Open File from board"
+      },
+      {
         "command": "mpyWorkbench.uploadActiveFile",
         "title": "MPY Workbench: Upload Active File"
       },
@@ -255,6 +259,11 @@
           "command": "mpyWorkbench.uploadToBoard",
           "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
           "group": "2_sync@1"
+        },
+        {
+          "command": "mpyWorkbench.openFile",
+          "when": "view == mpyWorkbenchFsView && viewItem == file",
+          "group": "1_open@1"
         }
       ]
     },
