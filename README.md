@@ -65,9 +65,9 @@ The Python path used by the extension can be adjusted in the extension settings 
 
 ## 🗺️ Roadmap & Current State
 Currently optimized and tested for ESP32-S3 and ESP32-C3.
-[ ] Full Windows validation (COM port consistency).
-[ ] Integrated firmware flashing.
-[ ] Expanded board support (RP2040, STM32).
+- [ ] Full Windows validation (COM port consistency).
+- [ ] Integrated firmware flashing.
+- [ ] Expanded board support (RP2040, STM32).
 
 ## 🤝 Contributing
 This project is in active development. I use it daily for my professional projects and aim to respond to issues and PRs quickly. If you find a bug or have a feature request, please open an issue.
