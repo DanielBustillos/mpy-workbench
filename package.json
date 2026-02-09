@@ -64,6 +64,11 @@
     "views": {
       "mpyWorkbenchFs": [
         {
+          "id": "mpyWorkbenchLocalFilesView",
+          "name": "Local files",
+          "icon": "$(folder-opened)"
+        },
+        {
           "id": "mpyWorkbenchFsView",
           "name": "Files",
           "icon": "$(files)"

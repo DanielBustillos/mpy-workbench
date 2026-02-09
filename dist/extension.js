@@ -6,6 +6,7 @@ const vscode = require("vscode");
 const esp32Fs_1 = require("./esp32Fs");
 const actions_1 = require("./actions");
 const syncView_1 = require("./syncView");
+const localFilesView_1 = require("./localFilesView");
 const mp = require("./mpremote");
 const mpremote_1 = require("./mpremote");
 const path = require("node:path");
@@ -173,6 +174,8 @@ function activate(context) {
     const actionsView = vscode.window.createTreeView("mpyWorkbenchActionsView", { treeDataProvider: actionsTree });
     const syncTree = new syncView_1.SyncTree();
     const syncView = vscode.window.createTreeView("mpyWorkbenchSyncView", { treeDataProvider: syncTree });
+    const localFilesTree = new localFilesView_1.LocalFilesTree();
+    const localFilesView = vscode.window.createTreeView("mpyWorkbenchLocalFilesView", { treeDataProvider: localFilesTree });
     const decorations = new decorations_1.Esp32DecorationProvider();
     context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
     // Export decorations for use in other modules
@@ -280,7 +283,7 @@ function activate(context) {
         });
         return opQueue;
     }
-    context.subscriptions.push(view, actionsView, syncView, vscode.commands.registerCommand("mpyWorkbench.refresh", () => {
+    context.subscriptions.push(view, actionsView, syncView, localFilesView, vscode.commands.registerCommand("mpyWorkbench.refresh", () => {
         // Clear cache and force next listing to come from device
         tree.clearCache();
         tree.enableRawListForNext();

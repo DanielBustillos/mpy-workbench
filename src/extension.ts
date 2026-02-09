@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { Esp32Tree } from "./esp32Fs";
 import { ActionsTree } from "./actions";
 import { SyncTree } from "./syncView";
+import { LocalFilesTree } from "./localFilesView";
 import { Esp32Node } from "./types";
 import * as mp from "./mpremote";
 import { refreshFileTreeCache, debugTreeParsing, debugFilesystemStatus, runMpremote } from "./mpremote";
@@ -191,6 +192,8 @@ export function activate(context: vscode.ExtensionContext) {
   const actionsView = vscode.window.createTreeView("mpyWorkbenchActionsView", { treeDataProvider: actionsTree });
   const syncTree = new SyncTree();
   const syncView = vscode.window.createTreeView("mpyWorkbenchSyncView", { treeDataProvider: syncTree });
+  const localFilesTree = new LocalFilesTree();
+  const localFilesView = vscode.window.createTreeView("mpyWorkbenchLocalFilesView", { treeDataProvider: localFilesTree });
   const decorations = new Esp32DecorationProvider();
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
   // Export decorations for use in other modules
@@ -299,6 +302,7 @@ export function activate(context: vscode.ExtensionContext) {
     view,
     actionsView,
     syncView,
+    localFilesView,
     vscode.commands.registerCommand("mpyWorkbench.refresh", () => {
       // Clear cache and force next listing to come from device
       tree.clearCache();
