@@ -4,6 +4,7 @@
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via mpremote. Requires mpremote >= 1.26.",
   "version": "0.3.1",
+  "license": "MIT",
   "publisher": "DanielBucam",
   "engines": {
     "vscode": "^1.84.0"
@@ -100,6 +101,11 @@
         "title": "Open File from board"
       },
       {
+        "command": "mpyWorkbench.downloadFileFromBoard",
+        "title": "Download file (Board → Local)",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "mpyWorkbench.uploadActiveFile",
         "title": "MPY Workbench: Upload Active File"
       },
@@ -186,6 +192,34 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "mpyWorkbench.localOpen",
+        "title": "Open"
+      },
+      {
+        "command": "mpyWorkbench.localCut",
+        "title": "Cut"
+      },
+      {
+        "command": "mpyWorkbench.localCopy",
+        "title": "Copy"
+      },
+      {
+        "command": "mpyWorkbench.localCopyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "mpyWorkbench.localCopyRelativePath",
+        "title": "Copy Relative Path"
+      },
+      {
+        "command": "mpyWorkbench.localRename",
+        "title": "Rename"
+      },
+      {
+        "command": "mpyWorkbench.localDelete",
+        "title": "Delete"
+      },
+      {
         "command": "mpyWorkbench.deleteAllBoard",
         "title": "MPY Workbench: Clear Device Files",
         "icon": {
@@ -256,14 +290,54 @@
       ],
       "view/item/context": [
         {
+          "command": "mpyWorkbench.localOpen",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "1_open@1"
+        },
+        {
+          "command": "mpyWorkbench.localCut",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "2_compare@1"
+        },
+        {
+          "command": "mpyWorkbench.localCopy",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "2_compare@2"
+        },
+        {
+          "command": "mpyWorkbench.localCopyPath",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "5_copy@1"
+        },
+        {
+          "command": "mpyWorkbench.localCopyRelativePath",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "5_copy@2"
+        },
+        {
+          "command": "mpyWorkbench.localRename",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "6_workspace@1"
+        },
+        {
+          "command": "mpyWorkbench.localDelete",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "6_workspace@2"
+        },
+        {
           "command": "mpyWorkbench.uploadToBoard",
           "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
-          "group": "2_sync@1"
+          "group": "9_sync@1"
         },
         {
           "command": "mpyWorkbench.openFile",
           "when": "view == mpyWorkbenchFsView && viewItem == file",
           "group": "1_open@1"
+        },
+        {
+          "command": "mpyWorkbench.downloadFileFromBoard",
+          "when": "view == mpyWorkbenchFsView && viewItem == file",
+          "group": "2_sync@1"
         }
       ]
     },

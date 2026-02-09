@@ -489,6 +489,62 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`Upload failed: ${err?.message ?? String(err)}`);
       }
     }),
+
+    vscode.commands.registerCommand("mpyWorkbench.localOpen", async (node: LocalFileNode) => {
+      const uri = vscode.Uri.file(node.fsPath);
+      if (node.kind === "file") {
+        await vscode.commands.executeCommand("vscode.open", uri);
+      } else {
+        await vscode.commands.executeCommand("revealFileInOS", uri);
+      }
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCut", async (node: LocalFileNode) => {
+      await vscode.commands.executeCommand("filesExplorer.cut", vscode.Uri.file(node.fsPath));
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCopy", async (node: LocalFileNode) => {
+      await vscode.commands.executeCommand("filesExplorer.copy", vscode.Uri.file(node.fsPath));
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCopyPath", async (node: LocalFileNode) => {
+      await vscode.env.clipboard.writeText(node.fsPath);
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCopyRelativePath", async (node: LocalFileNode) => {
+      await vscode.env.clipboard.writeText(node.relPath);
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localRename", async (node: LocalFileNode) => {
+      const uri = vscode.Uri.file(node.fsPath);
+      const newName = await vscode.window.showInputBox({
+        prompt: "New name",
+        value: node.name,
+        validateInput: (v) => (!v || v.includes("/") || v.includes("\\") ? "Invalid name" : undefined),
+      });
+      if (!newName || newName === node.name) return;
+      const parentPath = path.dirname(node.fsPath);
+      const newPath = path.join(parentPath, newName);
+      const newUri = vscode.Uri.file(newPath);
+      try {
+        await vscode.workspace.fs.rename(uri, newUri, { overwrite: false });
+        localFilesTree.refreshTree();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Rename failed: ${err?.message ?? String(err)}`);
+      }
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localDelete", async (node: LocalFileNode) => {
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete ${node.name}?`,
+        { modal: true },
+        "Delete",
+        "Cancel"
+      );
+      if (confirm !== "Delete") return;
+      const uri = vscode.Uri.file(node.fsPath);
+      try {
+        await vscode.workspace.fs.delete(uri, { recursive: node.kind === "dir", useTrash: true });
+        localFilesTree.refreshTree();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Delete failed: ${err?.message ?? String(err)}`);
+      }
+    }),
+
     vscode.commands.registerCommand("mpyWorkbench.setPort", async (port: string) => {
   await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);
   updatePortContext();
@@ -911,6 +967,31 @@ export function activate(context: vscode.ExtensionContext) {
           console.error(`[DEBUG] openFile (extension fallback): Failed to copy file to temp location:`, copyError);
           vscode.window.showErrorMessage(`Failed to copy file from board to temp location: ${copyError?.message || copyError}`);
         }
+      }
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.downloadFileFromBoard", async (node: Esp32Node) => {
+      if (node.kind !== "file") return;
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+      if (isReplOpen()) {
+        await disconnectReplTerminal();
+        await new Promise(r => setTimeout(r, 400));
+      }
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+      const rel = toLocalRelative(node.path, rootPath);
+      const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+      try {
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+        tree.addNode(node.path, false);
+        vscode.window.showInformationMessage(`Downloaded to ${rel}`);
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
+        await vscode.window.showTextDocument(doc, { preview: false });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Download failed: ${err?.message ?? String(err)}`);
       }
     }),
     vscode.commands.registerCommand("mpyWorkbench.mkdir", async (node?: Esp32Node) => {
