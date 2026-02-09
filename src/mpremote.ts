@@ -1710,22 +1710,6 @@ export async function getBoardFileSizes(rootPath: string = "/"): Promise<Map<str
   return fileSizes;
 }
 
-export async function mvOnDevice(src: string, dst: string): Promise<void> {
-  const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
-  if (!connect || connect === "auto") throw new Error("Select a specific serial port first");
-
-  try {
-    const srcArg = src && src !== "/" ? `"${src}"` : "/";
-    const dstArg = dst && dst !== "/" ? `"${dst}"` : "/";
-    await runMpremote(["connect", connect, "fs", "mv", srcArg, dstArg]);
-    
-    // Invalidate cache since filesystem changed
-    clearFileTreeCache();
-  } catch (error: any) {
-    throw new Error(`Move/rename failed: ${error?.message || error}`);
-  }
-}
-
 // Cleanup function for extension deactivation
 export function cleanupConnections(): void {
   connectionManager.stop();

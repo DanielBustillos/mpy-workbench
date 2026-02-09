@@ -16,7 +16,6 @@ exports.deleteAllInPath = deleteAllInPath;
 exports.runFile = runFile;
 exports.reset = reset;
 exports.listTreeStats = listTreeStats;
-exports.mvOnDevice = mvOnDevice;
 exports.clearFileTreeCache = clearFileTreeCache;
 exports.refreshFileTreeCache = refreshFileTreeCache;
 exports.debugTreeParsing = debugTreeParsing;
@@ -70,9 +69,6 @@ async function reset() {
 }
 async function listTreeStats(root) {
     return [];
-}
-async function mvOnDevice(src, dst) {
-    // Implementation
 }
 function clearFileTreeCache() {
     // Implementation

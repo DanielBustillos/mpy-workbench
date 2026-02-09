@@ -65,10 +65,6 @@ export async function listTreeStats(root: string): Promise<Array<{ path: string;
   return [];
 }
 
-export async function mvOnDevice(src: string, dst: string): Promise<void> {
-  // Implementation
-}
-
 export function clearFileTreeCache(): void {
   // Implementation
 }

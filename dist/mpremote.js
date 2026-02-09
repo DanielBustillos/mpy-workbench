@@ -30,7 +30,6 @@ exports.healthCheck = healthCheck;
 exports.getConnectionStats = getConnectionStats;
 exports.getBoardFilesAndSizes = getBoardFilesAndSizes;
 exports.getBoardFileSizes = getBoardFileSizes;
-exports.mvOnDevice = mvOnDevice;
 exports.cleanupConnections = cleanupConnections;
 const node_child_process_1 = require("node:child_process");
 const vscode = require("vscode");
@@ -1536,21 +1535,6 @@ async function getBoardFileSizes(rootPath = "/") {
         fileSizes.set(path, info.size);
     }
     return fileSizes;
-}
-async function mvOnDevice(src, dst) {
-    const connect = normalizeConnect(vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto") || "auto");
-    if (!connect || connect === "auto")
-        throw new Error("Select a specific serial port first");
-    try {
-        const srcArg = src && src !== "/" ? `"${src}"` : "/";
-        const dstArg = dst && dst !== "/" ? `"${dst}"` : "/";
-        await runMpremote(["connect", connect, "fs", "mv", srcArg, dstArg]);
-        // Invalidate cache since filesystem changed
-        clearFileTreeCache();
-    }
-    catch (error) {
-        throw new Error(`Move/rename failed: ${error?.message || error}`);
-    }
 }
 // Cleanup function for extension deactivation
 function cleanupConnections() {

@@ -51,11 +51,6 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
     item.iconPath = element.kind === "dir"
       ? { light: this.icon("folder.svg"), dark: this.icon("folder.svg") }
       : { light: this.icon("file.svg"), dark: this.icon("file.svg") };
-    if (element.kind === "file") item.command = {
-      command: "mpyWorkbench.openFile",
-      title: "Open",
-      arguments: [element]
-    };
     return item;
   }
 
