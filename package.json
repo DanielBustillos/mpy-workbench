@@ -65,7 +65,7 @@
       "mpyWorkbenchFs": [
         {
           "id": "mpyWorkbenchFsView",
-          "name": "Files",
+          "name": "Board files",
           "icon": "$(files)"
         },
         {

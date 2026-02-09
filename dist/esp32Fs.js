@@ -37,6 +37,11 @@ class Esp32Tree {
             item.className = 'esp32fs-no-port-item';
             return item;
         }
+        if (element === "no-files") {
+            const item = new vscode.TreeItem("No files yet", vscode.TreeItemCollapsibleState.None);
+            item.tooltip = "Device is connected but has no files or folders";
+            return item;
+        }
         const item = new vscode.TreeItem(element.name, element.kind === "dir" ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
         if (element.isLocalOnly) {
             item.tooltip = '?';
@@ -110,12 +115,16 @@ class Esp32Tree {
         }
         const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
         const path = element?.path ?? rootPath;
+        const isRoot = !element;
         // Permite forzar re-listado una vez (desde el botón Refresh)
         const forceList = this.rawListOnlyOnce;
         this.rawListOnlyOnce = false;
         // Si hay cache para este path y no se fuerza re-listado, úsalo
         if (!forceList && this._nodeCache.has(path)) {
-            return this._nodeCache.get(path);
+            const cached = this._nodeCache.get(path);
+            if (isRoot && cached.length === 0)
+                return ["no-files"];
+            return cached;
         }
         try {
             let entries;
@@ -222,6 +231,8 @@ class Esp32Tree {
             nodes.sort((a, b) => (a.kind === b.kind) ? a.name.localeCompare(b.name) : (a.kind === "dir" ? -1 : 1));
             // Cachear este directorio para actualizaciones incrementales
             this._nodeCache.set(path, nodes);
+            if (isRoot && nodes.length === 0)
+                return ["no-files"];
             return nodes;
         }
         catch (err) {

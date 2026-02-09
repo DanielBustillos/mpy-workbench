@@ -4,7 +4,7 @@ import * as mp from "./mpremote";
 import { listDirPyRaw } from "./pyraw";
 import { createIgnoreMatcher } from "./sync";
 
-type TreeNode = Esp32Node | "no-port";
+type TreeNode = Esp32Node | "no-port" | "no-files";
 
 export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | void>();
@@ -13,11 +13,11 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
 
   refreshTree(): void { this._onDidChangeTreeData.fire(); }
 
-  getTreeItem(element: Esp32Node | "no-port"): vscode.TreeItem {
+  getTreeItem(element: TreeNode): vscode.TreeItem {
     return this.getTreeItemForNode(element);
   }
 
-  getChildren(element?: Esp32Node): Thenable<(Esp32Node | "no-port")[]> {
+  getChildren(element?: Esp32Node): Thenable<TreeNode[]> {
     return Promise.resolve(this.getChildNodes(element));
   }
 
@@ -25,7 +25,7 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
   // skipping any auto-suspend/handshake commands.
   enableRawListForNext(): void { this.rawListOnlyOnce = true; }
 
-  getTreeItemForNode(element: Esp32Node | "no-port"): vscode.TreeItem {
+  getTreeItemForNode(element: TreeNode): vscode.TreeItem {
     if (element === "no-port") {
       const item = new vscode.TreeItem("", vscode.TreeItemCollapsibleState.None);
       item.command = {
@@ -37,6 +37,11 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
       item.label = "$(plug) Select Serial Port";
       // Aplicar la clase CSS personalizada
       (item as any).className = 'esp32fs-no-port-item';
+      return item;
+    }
+    if (element === "no-files") {
+      const item = new vscode.TreeItem("No files yet", vscode.TreeItemCollapsibleState.None);
+      item.tooltip = "Device is connected but has no files or folders";
       return item;
     }
     const item = new vscode.TreeItem(
@@ -114,19 +119,22 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
   }
 
   // Modifica getChildNodes para usar el cache si existe
-  async getChildNodes(element?: Esp32Node): Promise<(Esp32Node | "no-port")[]> {
+  async getChildNodes(element?: Esp32Node): Promise<TreeNode[]> {
     const port = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto");
     if (!port || port === "" || port === "auto") {
       return [];
     }
     const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
     const path = element?.path ?? rootPath;
+    const isRoot = !element;
     // Permite forzar re-listado una vez (desde el botón Refresh)
     const forceList = this.rawListOnlyOnce;
     this.rawListOnlyOnce = false;
     // Si hay cache para este path y no se fuerza re-listado, úsalo
     if (!forceList && this._nodeCache.has(path)) {
-      return this._nodeCache.get(path)!;
+      const cached = this._nodeCache.get(path)!;
+      if (isRoot && cached.length === 0) return ["no-files"];
+      return cached;
     }
     try {
       let entries: { name: string; isDir: boolean }[] | undefined;
@@ -234,6 +242,7 @@ export class Esp32Tree implements vscode.TreeDataProvider<TreeNode> {
       nodes.sort((a,b) => (a.kind === b.kind) ? a.name.localeCompare(b.name) : (a.kind === "dir" ? -1 : 1));
       // Cachear este directorio para actualizaciones incrementales
       this._nodeCache.set(path, nodes);
+      if (isRoot && nodes.length === 0) return ["no-files"];
       return nodes;
     } catch (err: any) {
       // Only show error if it's not a "no port selected" issue
