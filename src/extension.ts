@@ -31,6 +31,7 @@ import {
   toDevicePath,
   clearRunFileTerminalIf
 } from "./mpremoteCommands";
+import { clearPythonCache } from "./pythonInterpreter";
 
 export function activate(context: vscode.ExtensionContext) {
   // Check if mpremote is available
@@ -888,6 +889,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Keep welcome button visibility in sync if user changes settings directly
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('mpyWorkbench.connect')) updatePortContext();
+      if (e.affectsConfiguration('mpyWorkbench.pythonPath')) clearPythonCache();
     }),
 
     vscode.commands.registerCommand("mpyWorkbench.uploadActiveFile", async () => {

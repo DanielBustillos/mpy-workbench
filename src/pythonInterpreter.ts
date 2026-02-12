@@ -29,6 +29,26 @@ export class PythonInterpreterManager {
 
         let pythonPath: string | null = null;
 
+        // Method 0: mpyWorkbench.pythonPath override (user explicitly set; use it first)
+        try {
+            const mpyOverride = this.getMpyWorkbenchPythonPath(workspaceFolder);
+            if (mpyOverride) {
+                const validation = await this.validatePythonPath(mpyOverride);
+                if (validation.valid) {
+                    this.cacheResult(mpyOverride);
+                    return mpyOverride;
+                }
+                if (validation.missingMpremote) {
+                    this.showMpremoteInstallationNotification(mpyOverride);
+                    this.cacheResult(mpyOverride);
+                    return mpyOverride; // respect user's choice
+                }
+                // Python path invalid (e.g. not found); fall through to other methods
+            }
+        } catch (error) {
+            console.log('Failed to use mpyWorkbench.pythonPath:', error);
+        }
+
         try {
             // Method 1: Try to get from Python extension API
             pythonPath = await this.getPythonFromExtensionAPI(workspaceFolder);
@@ -133,14 +153,25 @@ export class PythonInterpreterManager {
     }
 
     /**
-     * Get Python interpreter from VS Code configuration
+     * Get only the mpyWorkbench.pythonPath override (used to prioritize user's explicit choice).
      */
-    private static getPythonFromConfiguration(workspaceFolder?: vscode.WorkspaceFolder): string | null {
-        // First check MPY Workbench specific override
+    private static getMpyWorkbenchPythonPath(workspaceFolder?: vscode.WorkspaceFolder): string | null {
         const mpyConfig = vscode.workspace.getConfiguration('mpyWorkbench', workspaceFolder?.uri);
         const mpyPythonPath = mpyConfig.get<string>('pythonPath');
         if (mpyPythonPath && mpyPythonPath.trim()) {
             return mpyPythonPath.trim();
+        }
+        return null;
+    }
+
+    /**
+     * Get Python interpreter from VS Code configuration
+     */
+    private static getPythonFromConfiguration(workspaceFolder?: vscode.WorkspaceFolder): string | null {
+        // First check MPY Workbench specific override
+        const mpyPythonPath = this.getMpyWorkbenchPythonPath(workspaceFolder);
+        if (mpyPythonPath) {
+            return mpyPythonPath;
         }
 
         // Then check Python extension configuration
