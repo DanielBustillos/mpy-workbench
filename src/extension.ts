@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { Esp32Tree } from "./esp32Fs";
 import { ActionsTree } from "./actions";
 import { SyncTree } from "./syncView";
+import { LocalFilesTree, LocalFileNode } from "./localFilesView";
 import { Esp32Node } from "./types";
 import * as mp from "./mpremote";
 import { refreshFileTreeCache, debugTreeParsing, debugFilesystemStatus, runMpremote } from "./mpremote";
@@ -30,6 +31,7 @@ import {
   toDevicePath,
   clearRunFileTerminalIf
 } from "./mpremoteCommands";
+import { clearPythonCache } from "./pythonInterpreter";
 
 export function activate(context: vscode.ExtensionContext) {
   // Check if mpremote is available
@@ -191,6 +193,8 @@ export function activate(context: vscode.ExtensionContext) {
   const actionsView = vscode.window.createTreeView("mpyWorkbenchActionsView", { treeDataProvider: actionsTree });
   const syncTree = new SyncTree();
   const syncView = vscode.window.createTreeView("mpyWorkbenchSyncView", { treeDataProvider: syncTree });
+  const localFilesTree = new LocalFilesTree();
+  const localFilesView = vscode.window.createTreeView("mpyWorkbenchLocalFilesView", { treeDataProvider: localFilesTree });
   const decorations = new Esp32DecorationProvider();
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
   // Export decorations for use in other modules
@@ -295,10 +299,37 @@ export function activate(context: vscode.ExtensionContext) {
     });
     return opQueue as Promise<T>;
   }
+
+  async function uploadLocalFolderToDevice(localDirPath: string, deviceBasePath: string): Promise<void> {
+    const folderName = path.basename(localDirPath);
+    const deviceDirPath = deviceBasePath === "/" || !deviceBasePath
+      ? `/${folderName}`
+      : `${deviceBasePath.replace(/\/$/, "")}/${folderName}`;
+    try {
+      await withAutoSuspend(() => mp.mkdir(deviceDirPath));
+    } catch (err: any) {
+      const msg = String(err?.message ?? err).toLowerCase();
+      if (!msg.includes("file exists") && !msg.includes("directory exists")) throw err;
+    }
+    tree.addNode(deviceDirPath, true);
+    const entries = await fs.readdir(localDirPath, { withFileTypes: true });
+    for (const e of entries) {
+      const entryAbs = path.join(localDirPath, e.name);
+      const deviceChildPath = deviceDirPath === "/" ? `/${e.name}` : `${deviceDirPath}/${e.name}`;
+      if (e.isDirectory()) {
+        await uploadLocalFolderToDevice(entryAbs, deviceDirPath);
+      } else if (e.isFile()) {
+        await withAutoSuspend(() => mp.cpToDevice(entryAbs, deviceChildPath));
+        tree.addNode(deviceChildPath, false);
+      }
+    }
+  }
+
   context.subscriptions.push(
     view,
     actionsView,
     syncView,
+    localFilesView,
     vscode.commands.registerCommand("mpyWorkbench.refresh", () => {
       // Clear cache and force next listing to come from device
       tree.clearCache();
@@ -436,105 +467,85 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("mpyWorkbench.stop", stop),
     vscode.commands.registerCommand("mpyWorkbench.softReset", softReset),
 
-    vscode.commands.registerCommand("mpyWorkbench.newFileBoardAndLocal", async () => {
+    vscode.commands.registerCommand("mpyWorkbench.uploadToBoard", async (node: LocalFileNode) => {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (!ws) {
         vscode.window.showErrorMessage("No workspace folder open");
         return;
       }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-      const filename = await vscode.window.showInputBox({
-        prompt: "New file name (relative to project root)",
-        placeHolder: "main.py, lib/utils.py, ..."
-      });
-      if (!filename || filename.endsWith("/")) return;
-      const abs = path.join(ws.uri.fsPath, ...filename.split("/"));
+      const devicePath = toDevicePath(node.relPath, rootPath);
       try {
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, "", { flag: "wx" });
-      } catch (e: any) {
-        if (e.code !== "EEXIST") {
-          vscode.window.showErrorMessage("Could not create file: " + e.message);
-          return;
+        if (node.kind === "file") {
+          await withAutoSuspend(() => mp.cpToDevice(node.fsPath, devicePath));
+          tree.addNode(devicePath, false);
+          vscode.window.showInformationMessage(`Uploaded to board: ${node.relPath}`);
+        } else {
+          const deviceParent = path.posix.dirname(devicePath);
+          await uploadLocalFolderToDevice(node.fsPath, deviceParent);
+          vscode.window.showInformationMessage(`Uploaded folder to board: ${node.relPath}`);
         }
+        tree.refreshTree();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Upload failed: ${err?.message ?? String(err)}`);
       }
-      const doc = await vscode.workspace.openTextDocument(abs);
-      await vscode.window.showTextDocument(doc, { preview: false });
-      // On first save, upload to board (unless ignored)
-      const saveDisposable = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
-        if (savedDoc.uri.fsPath !== abs) return;
-        const devicePath = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + filename.replace(/^\/+/, "");
-        try {
-          const matcher = await createIgnoreMatcher(ws.uri.fsPath);
-          const rel = filename.replace(/^\/+/, "");
-          if (matcher(rel.replace(/\\/g, '/'), false)) {
-            vscode.window.showInformationMessage(`File saved (ignored for upload): ${filename}`);
-          } else {
-            try {
-              await withAutoSuspend(() => mp.cpToDevice(abs, devicePath));
-              vscode.window.showInformationMessage(`File saved locally and uploaded to board: ${filename}`);
-              tree.addNode(devicePath, false);
-            } catch (uploadError: any) {
-              console.error(`[DEBUG] Failed to upload new file to board:`, uploadError);
-              vscode.window.showWarningMessage(`File saved locally but upload to board failed: ${uploadError?.message || uploadError}`);
-            }
-          }
-        } catch (err: any) {
-          vscode.window.showErrorMessage(`Error uploading file to board: ${err?.message ?? err}`);
-        }
-        saveDisposable.dispose();
-      });
     }),
 
-    vscode.commands.registerCommand("mpyWorkbench.openFileFromLocal", async (node: Esp32Node) => {
-      if (node.kind !== "file") return;
-      try {
-        const ws = getWorkspaceFolder();
-        const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-        const rel = toLocalRelative(node.path, rootPath);
-        const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
-        await fs.access(abs);
-        const doc = await vscode.workspace.openTextDocument(abs);
-        await vscode.window.showTextDocument(doc, { preview: true });
-      } catch (error) {
-        vscode.window.showErrorMessage(`File not found in local workspace: ${toLocalRelative(node.path, vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/"))}`);
+    vscode.commands.registerCommand("mpyWorkbench.localOpen", async (node: LocalFileNode) => {
+      const uri = vscode.Uri.file(node.fsPath);
+      if (node.kind === "file") {
+        await vscode.commands.executeCommand("vscode.open", uri);
+      } else {
+        await vscode.commands.executeCommand("revealFileInOS", uri);
       }
     }),
-    vscode.commands.registerCommand("mpyWorkbench.syncFileLocalToBoard", async (node: Esp32Node) => {
-      if (node.kind !== "file") return;
-      const ws = vscode.workspace.workspaceFolders?.[0];
-      if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-      const rel = toLocalRelative(node.path, rootPath);
-      const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+    vscode.commands.registerCommand("mpyWorkbench.localCut", async (node: LocalFileNode) => {
+      await vscode.commands.executeCommand("filesExplorer.cut", vscode.Uri.file(node.fsPath));
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCopy", async (node: LocalFileNode) => {
+      await vscode.commands.executeCommand("filesExplorer.copy", vscode.Uri.file(node.fsPath));
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCopyPath", async (node: LocalFileNode) => {
+      await vscode.env.clipboard.writeText(node.fsPath);
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localCopyRelativePath", async (node: LocalFileNode) => {
+      await vscode.env.clipboard.writeText(node.relPath);
+    }),
+    vscode.commands.registerCommand("mpyWorkbench.localRename", async (node: LocalFileNode) => {
+      const uri = vscode.Uri.file(node.fsPath);
+      const newName = await vscode.window.showInputBox({
+        prompt: "New name",
+        value: node.name,
+        validateInput: (v) => (!v || v.includes("/") || v.includes("\\") ? "Invalid name" : undefined),
+      });
+      if (!newName || newName === node.name) return;
+      const parentPath = path.dirname(node.fsPath);
+      const newPath = path.join(parentPath, newName);
+      const newUri = vscode.Uri.file(newPath);
       try {
-        await fs.access(abs);
-      } catch {
-        const pick = await vscode.window.showWarningMessage(`Local file not found: ${rel}. Download from board first?`, { modal: true }, "Download");
-        if (pick !== "Download") return;
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+        await vscode.workspace.fs.rename(uri, newUri, { overwrite: false });
+        localFilesTree.refreshTree();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Rename failed: ${err?.message ?? String(err)}`);
       }
-      await withAutoSuspend(() => mp.cpToDevice(abs, node.path));
-      tree.addNode(node.path, false); // Add uploaded file to tree
-      vscode.window.showInformationMessage(`Synced local → board: ${rel}`);
     }),
-    vscode.commands.registerCommand("mpyWorkbench.syncFileBoardToLocal", async (node: Esp32Node) => {
-      if (node.kind !== "file") return;
-      const ws = vscode.workspace.workspaceFolders?.[0];
-      if (!ws) { vscode.window.showErrorMessage("No workspace folder open"); return; }
-      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-      const rel = toLocalRelative(node.path, rootPath);
-      const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
-      await fs.mkdir(path.dirname(abs), { recursive: true });
-      await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
-      tree.addNode(node.path, false); // Ensure presence in tree (no relisting)
-      vscode.window.showInformationMessage(`Synced board → local: ${rel}`);
+    vscode.commands.registerCommand("mpyWorkbench.localDelete", async (node: LocalFileNode) => {
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete ${node.name}?`,
+        { modal: true },
+        "Delete",
+        "Cancel"
+      );
+      if (confirm !== "Delete") return;
+      const uri = vscode.Uri.file(node.fsPath);
       try {
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
-        await vscode.window.showTextDocument(doc, { preview: false });
-      } catch {}
+        await vscode.workspace.fs.delete(uri, { recursive: node.kind === "dir", useTrash: true });
+        localFilesTree.refreshTree();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Delete failed: ${err?.message ?? String(err)}`);
+      }
     }),
+
     vscode.commands.registerCommand("mpyWorkbench.setPort", async (port: string) => {
   await vscode.workspace.getConfiguration().update("mpyWorkbench.connect", port, vscode.ConfigurationTarget.Global);
   updatePortContext();
@@ -878,6 +889,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Keep welcome button visibility in sync if user changes settings directly
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('mpyWorkbench.connect')) updatePortContext();
+      if (e.affectsConfiguration('mpyWorkbench.pythonPath')) clearPythonCache();
     }),
 
     vscode.commands.registerCommand("mpyWorkbench.uploadActiveFile", async () => {
@@ -959,6 +971,31 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     }),
+    vscode.commands.registerCommand("mpyWorkbench.downloadFileFromBoard", async (node: Esp32Node) => {
+      if (node.kind !== "file") return;
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (!ws) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+      if (isReplOpen()) {
+        await disconnectReplTerminal();
+        await new Promise(r => setTimeout(r, 400));
+      }
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+      const rel = toLocalRelative(node.path, rootPath);
+      const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+      try {
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
+        tree.addNode(node.path, false);
+        vscode.window.showInformationMessage(`Downloaded to ${rel}`);
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
+        await vscode.window.showTextDocument(doc, { preview: false });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Download failed: ${err?.message ?? String(err)}`);
+      }
+    }),
     vscode.commands.registerCommand("mpyWorkbench.mkdir", async (node?: Esp32Node) => {
       const base = node?.kind === "dir" ? node.path : (node ? path.posix.dirname(node.path) : "/");
       const name = await vscode.window.showInputBox({ prompt: "New folder name", validateInput: v => v ? undefined : "Required" });
@@ -966,69 +1003,6 @@ export function activate(context: vscode.ExtensionContext) {
       const target = base === "/" ? `/${name}` : `${base}/${name}`;
       await withAutoSuspend(() => mp.mkdir(target));
       tree.addNode(target, true);
-    }),
-    vscode.commands.registerCommand("mpyWorkbench.delete", async (node: Esp32Node) => {
-      const okBoard = await vscode.window.showWarningMessage(`Delete ${node.path} from board?`, { modal: true }, "Delete");
-      if (okBoard !== "Delete") return;
-      
-      // Mostrar progreso con animación
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Deleting ${node.path}...`,
-        cancellable: false
-      }, async (progress, token) => {
-        progress.report({ increment: 0, message: "Starting deletion..." });
-        try {
-          // Fast path: one-shot delete (file or directory)
-          const isDir = node.kind === "dir";
-          progress.report({ increment: 60, message: isDir ? "Removing directory..." : "Removing file..." });
-          await withAutoSuspend(() => mp.deleteAny(node.path));
-          progress.report({ increment: 100, message: "Deletion complete!" });
-          vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);
-          tree.removeNode(node.path);
-        } catch (err: any) {
-          progress.report({ increment: 100, message: "Deletion failed!" });
-          vscode.window.showErrorMessage(`Failed to delete ${node.path} from board: ${err?.message ?? String(err)}`);
-        }
-      });
-      
-    }),
-    vscode.commands.registerCommand("mpyWorkbench.deleteBoardAndLocal", async (node: Esp32Node) => {
-      const okBoardLocal = await vscode.window.showWarningMessage(`Delete ${node.path} from board AND local workspace?`, { modal: true }, "Delete");
-      if (okBoardLocal !== "Delete") return;
-      
-      // Mostrar progreso con animación
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Deleting ${node.path} from board and local...`,
-        cancellable: false
-      }, async (progress, token) => {
-        progress.report({ increment: 0, message: "Starting deletion..." });
-        
-        try {
-          // Fast path: one-shot delete on board
-          const isDir = node.kind === "dir";
-          progress.report({ increment: 50, message: isDir ? "Removing directory from board..." : "Removing file from board..." });
-          await withAutoSuspend(() => mp.deleteAny(node.path));
-          progress.report({ increment: 70, message: "Board deletion complete!" });
-          vscode.window.showInformationMessage(`Successfully deleted ${node.path} from board`);
-          tree.removeNode(node.path);
-        } catch (err: any) {
-          progress.report({ increment: 70, message: "Board deletion failed!" });
-          vscode.window.showErrorMessage(`Failed to delete ${node.path} from board: ${err?.message ?? String(err)}`);
-        }
-      });
-      
-      const ws = vscode.workspace.workspaceFolders?.[0];
-      if (ws) {
-        const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-        const rel = toLocalRelative(node.path, rootPath);
-        const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
-        try {
-          await fs.rm(abs, { recursive: true, force: true });
-        } catch {}
-      }
-      tree.removeNode(node.path);
     }),
     vscode.commands.registerCommand("mpyWorkbench.deleteAllBoard", async () => {
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
@@ -1112,105 +1086,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncBaseline"); }),
     vscode.commands.registerCommand("mpyWorkbench.syncBaselineFromBoardFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.syncBaselineFromBoard"); }),
     vscode.commands.registerCommand("mpyWorkbench.runActiveFileFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.runActiveFile"); }),
-    vscode.commands.registerCommand("mpyWorkbench.openReplFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.openRepl"); }),
-    vscode.commands.registerCommand("mpyWorkbench.newFileInTree", async (node?: Esp32Node) => {
-      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!ws) return;
-      // Determine base path on device
-      const baseDevice = node
-        ? (node.kind === "dir" ? node.path : path.posix.dirname(node.path))
-        : "/";
-      const baseLabel = baseDevice === "/" ? "/" : baseDevice;
-      const newName = await vscode.window.showInputBox({
-        prompt: `New file name (in ${baseLabel})`,
-        placeHolder: "filename.ext or subfolder/filename.ext",
-        validateInput: v => v && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "Name must not end with / and cannot be empty"
-      });
-      if (!newName) return;
-      const devicePath = baseDevice === "/" ? `/${newName.replace(/^\//, "")}` : `${baseDevice}/${newName.replace(/^\//, "")}`;
-      try {
-        // Create locally first
-        const relLocal = devicePath.replace(/^\//, "");
-        const localPath = path.join(ws, relLocal);
-        await fs.mkdir(path.dirname(localPath), { recursive: true });
-        await fs.writeFile(localPath, "");
-        // Upload to board
-        try {
-          await mp.uploadReplacing(localPath, devicePath);
-          vscode.window.showInformationMessage(`File created: ${devicePath}`);
-        } catch (uploadError: any) {
-          console.error(`[DEBUG] Failed to upload new file to board:`, uploadError);
-          vscode.window.showWarningMessage(`File created locally but upload to board failed: ${uploadError?.message || uploadError}`);
-        }
-      } catch (err: any) {
-        vscode.window.showErrorMessage(`Error creating file: ${err?.message ?? err}`);
-      }
-      vscode.commands.executeCommand("mpyWorkbench.refresh");
-    }),
-    vscode.commands.registerCommand("mpyWorkbench.newFolderInTree", async (node?: Esp32Node) => {
-      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!ws) return;
-      const baseDevice = node
-        ? (node.kind === "dir" ? node.path : path.posix.dirname(node.path))
-        : "/";
-      const baseLabel = baseDevice === "/" ? "/" : baseDevice;
-      const newName = await vscode.window.showInputBox({
-        prompt: `New folder name (in ${baseLabel})`,
-        placeHolder: "folder or subfolder/name",
-        validateInput: v => v && !v.endsWith(".") && !v.endsWith("/") && !v.endsWith("\\") ? undefined : "Name must not end with / and cannot be empty"
-      });
-      if (!newName) return;
-      const devicePath = baseDevice === "/" ? `/${newName.replace(/^\//, "")}` : `${baseDevice}/${newName.replace(/^\//, "")}`;
-      try {
-        await mp.mkdir(devicePath);
-        const relLocal = devicePath.replace(/^\//, "");
-        const localPath = path.join(ws, relLocal);
-        await fs.mkdir(localPath, { recursive: true });
-        vscode.window.showInformationMessage(`Folder created: ${devicePath}`);
-      } catch (err: any) {
-        vscode.window.showErrorMessage(`Error creating folder: ${err?.message ?? err}`);
-      }
-      vscode.commands.executeCommand("mpyWorkbench.refresh");
-    }),
-    vscode.commands.registerCommand("mpyWorkbench.renameNode", async (node: Esp32Node) => {
-      if (!node) return;
-      const oldPath = node.path;
-      const isDir = node.kind === "dir";
-      const base = path.posix.dirname(oldPath);
-      const oldName = path.posix.basename(oldPath);
-      const newName = await vscode.window.showInputBox({
-        prompt: `New name for ${oldName}`,
-        value: oldName,
-        validateInput: v => v && v !== oldName ? undefined : "Name must be different and not empty"
-      });
-      if (!newName || newName === oldName) return;
-      const newPath = base === "/" ? `/${newName}` : `${base}/${newName}`;
-      // Try to rename on board first
-      try {
-        await mp.mvOnDevice(oldPath, newPath);
-      } catch (err: any) {
-        vscode.window.showErrorMessage(`Error renaming on board: ${err?.message ?? err}`);
-        return;
-      }
-      // Try to rename locally if file exists locally
-      const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (wsFolder) {
-        // Compute local path from node.path
-        const relPath = node.path.replace(/^\//, "");
-        const localOld = path.join(wsFolder, relPath);
-        const localNew = path.join(wsFolder, base.replace(/^\//, ""), newName);
-        try {
-          await fs.rename(localOld, localNew);
-        } catch (e) {
-          // If file doesn't exist locally, ignore
-        }
-      }
-      vscode.window.showInformationMessage(`Renamed: ${oldPath} → ${newPath}`);
-      // Refresh tree
-      const tree = vscode.extensions.getExtension("DanielBucam.mpy-workbench")?.exports?.esp32Tree as { refreshTree: () => void };
-      if (tree && typeof tree.refreshTree === "function") tree.refreshTree();
-      else vscode.commands.executeCommand("mpyWorkbench.refresh");
-    })
+    vscode.commands.registerCommand("mpyWorkbench.openReplFromView", async () => { setSkipIdleOnce(); await vscode.commands.executeCommand("mpyWorkbench.openRepl"); })
   );
   // Auto-upload on save: if file is inside a workspace, push to device path mapped by mpyWorkbench.rootPath
   context.subscriptions.push(
