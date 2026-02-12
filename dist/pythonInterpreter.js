@@ -26,6 +26,26 @@ class PythonInterpreterManager {
             return this.cachedInterpreter;
         }
         let pythonPath = null;
+        // Method 0: mpyWorkbench.pythonPath override (user explicitly set; use it first)
+        try {
+            const mpyOverride = this.getMpyWorkbenchPythonPath(workspaceFolder);
+            if (mpyOverride) {
+                const validation = await this.validatePythonPath(mpyOverride);
+                if (validation.valid) {
+                    this.cacheResult(mpyOverride);
+                    return mpyOverride;
+                }
+                if (validation.missingMpremote) {
+                    this.showMpremoteInstallationNotification(mpyOverride);
+                    this.cacheResult(mpyOverride);
+                    return mpyOverride; // respect user's choice
+                }
+                // Python path invalid (e.g. not found); fall through to other methods
+            }
+        }
+        catch (error) {
+            console.log('Failed to use mpyWorkbench.pythonPath:', error);
+        }
         try {
             // Method 1: Try to get from Python extension API
             pythonPath = await this.getPythonFromExtensionAPI(workspaceFolder);
@@ -127,14 +147,24 @@ class PythonInterpreterManager {
         }
     }
     /**
-     * Get Python interpreter from VS Code configuration
+     * Get only the mpyWorkbench.pythonPath override (used to prioritize user's explicit choice).
      */
-    static getPythonFromConfiguration(workspaceFolder) {
-        // First check MPY Workbench specific override
+    static getMpyWorkbenchPythonPath(workspaceFolder) {
         const mpyConfig = vscode.workspace.getConfiguration('mpyWorkbench', workspaceFolder?.uri);
         const mpyPythonPath = mpyConfig.get('pythonPath');
         if (mpyPythonPath && mpyPythonPath.trim()) {
             return mpyPythonPath.trim();
+        }
+        return null;
+    }
+    /**
+     * Get Python interpreter from VS Code configuration
+     */
+    static getPythonFromConfiguration(workspaceFolder) {
+        // First check MPY Workbench specific override
+        const mpyPythonPath = this.getMpyWorkbenchPythonPath(workspaceFolder);
+        if (mpyPythonPath) {
+            return mpyPythonPath;
         }
         // Then check Python extension configuration
         const config = vscode.workspace.getConfiguration('python', workspaceFolder?.uri);

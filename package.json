@@ -3,7 +3,7 @@
   "icon": "media/logo.png",
   "displayName": "MPY Workbench",
   "description": "Browse and manage MicroPython files on ESP32 and similar boards via mpremote. Requires mpremote >= 1.26.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "DanielBucam",
   "engines": {
     "vscode": "^1.84.0"
