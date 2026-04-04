@@ -219,7 +219,8 @@ export function initRunFileTerminalTracking(context: vscode.ExtensionContext): v
         runFileTerminalBusy = true;
     }),
     vscode.window.onDidEndTerminalShellExecution((event) => {
-      runFileTerminalBusy = false;
+      if (event.terminal === runFileTerminal)
+        runFileTerminalBusy = false;
     })
   );
 }
@@ -233,11 +234,12 @@ export function clearRunFileTerminalIf(terminal: vscode.Terminal): void {
 }
 
 /** Abort any running command in the run file terminal by sending Ctrl-C */
-export function abortRunFileTerminal(): void {
+export async function abortRunFileTerminal(): Promise<void> {
   if (runFileTerminal && runFileTerminalBusy) {
     const alive = vscode.window.terminals.some(t => t === runFileTerminal);
     if (alive) {
       runFileTerminal.sendText("\x03", false); // Ctrl-C
+      await new Promise(r => setTimeout(r, 300));
     }
     runFileTerminalBusy = false;
   }

@@ -1122,11 +1122,9 @@ export function activate(context: vscode.ExtensionContext) {
       const deviceDest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + rel;
       try {
         // abort program and close REPL before auto-upload to avoid port conflicts
-        abortRunFileTerminal();
+        await abortRunFileTerminal();
         if (isReplOpen()) {
           await closeReplTerminal();
-          // Wait for the system to release the port
-          await new Promise(r => setTimeout(r, 400));
         }
         await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest));
         tree.addNode(deviceDest, false);

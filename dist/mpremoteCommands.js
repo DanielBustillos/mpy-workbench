@@ -236,7 +236,8 @@ function initRunFileTerminalTracking(context) {
         if (event.terminal === runFileTerminal && event.execution.commandLine.value.startsWith("mpremote "))
             runFileTerminalBusy = true;
     }), vscode.window.onDidEndTerminalShellExecution((event) => {
-        runFileTerminalBusy = false;
+        if (event.terminal === runFileTerminal)
+            runFileTerminalBusy = false;
     }));
 }
 /** Called when a terminal is closed; clears runFileTerminal if it was that terminal. */
@@ -247,11 +248,12 @@ function clearRunFileTerminalIf(terminal) {
     }
 }
 /** Abort any running command in the run file terminal by sending Ctrl-C */
-function abortRunFileTerminal() {
+async function abortRunFileTerminal() {
     if (runFileTerminal && runFileTerminalBusy) {
         const alive = vscode.window.terminals.some(t => t === runFileTerminal);
         if (alive) {
             runFileTerminal.sendText("\x03", false); // Ctrl-C
+            await new Promise(r => setTimeout(r, 300));
         }
         runFileTerminalBusy = false;
     }
