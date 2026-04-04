@@ -174,8 +174,6 @@ async function runActiveFile() {
     // If the REPL terminal is open, close it before executing
     if (isReplOpen()) {
         await closeReplTerminal();
-        // Wait for the system to release the port
-        await new Promise(r => setTimeout(r, 400));
     }
     let cmd;
     const ws = vscode.workspace.workspaceFolders?.[0];
