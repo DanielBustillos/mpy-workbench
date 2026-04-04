@@ -7,7 +7,9 @@ exports.serialSendCtrlC = serialSendCtrlC;
 exports.stop = stop;
 exports.softReset = softReset;
 exports.runActiveFile = runActiveFile;
+exports.initRunFileTerminalTracking = initRunFileTerminalTracking;
 exports.clearRunFileTerminalIf = clearRunFileTerminalIf;
+exports.abortRunFileTerminal = abortRunFileTerminal;
 exports.getReplTerminal = getReplTerminal;
 exports.isReplOpen = isReplOpen;
 exports.closeReplTerminal = closeReplTerminal;
@@ -224,10 +226,35 @@ async function runActiveFile() {
     runFileTerminal.show(true);
 }
 let runFileTerminal;
+let runFileTerminalBusy = false;
+let runFileTerminalTrackingInitialized = false;
+function initRunFileTerminalTracking(context) {
+    if (runFileTerminalTrackingInitialized)
+        return;
+    runFileTerminalTrackingInitialized = true;
+    context.subscriptions.push(vscode.window.onDidStartTerminalShellExecution((event) => {
+        if (event.terminal === runFileTerminal && event.execution.commandLine.value.startsWith("mpremote "))
+            runFileTerminalBusy = true;
+    }), vscode.window.onDidEndTerminalShellExecution((event) => {
+        runFileTerminalBusy = false;
+    }));
+}
 /** Called when a terminal is closed; clears runFileTerminal if it was that terminal. */
 function clearRunFileTerminalIf(terminal) {
-    if (terminal === runFileTerminal)
+    if (terminal === runFileTerminal) {
         runFileTerminal = undefined;
+        runFileTerminalBusy = false;
+    }
+}
+/** Abort any running command in the run file terminal by sending Ctrl-C */
+function abortRunFileTerminal() {
+    if (runFileTerminal && runFileTerminalBusy) {
+        const alive = vscode.window.terminals.some(t => t === runFileTerminal);
+        if (alive) {
+            runFileTerminal.sendText("\x03", false); // Ctrl-C
+        }
+        runFileTerminalBusy = false;
+    }
 }
 let replTerminal;
 async function getReplTerminal(context) {

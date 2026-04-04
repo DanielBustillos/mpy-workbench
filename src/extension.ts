@@ -29,13 +29,16 @@ import {
   openReplTerminal,
   toLocalRelative,
   toDevicePath,
-  clearRunFileTerminalIf
+  clearRunFileTerminalIf,
+  abortRunFileTerminal,
+  initRunFileTerminalTracking
 } from "./mpremoteCommands";
 import { clearPythonCache } from "./pythonInterpreter";
 
 export function activate(context: vscode.ExtensionContext) {
   // Check if mpremote is available
   checkMpremoteAvailability().catch(() => {});
+  initRunFileTerminalTracking(context);
   // Helper to get workspace folder or throw error
   function getWorkspaceFolder(): vscode.WorkspaceFolder {
     const ws = vscode.workspace.workspaceFolders?.[0];
@@ -1118,6 +1121,13 @@ export function activate(context: vscode.ExtensionContext) {
       } catch {}
       const deviceDest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + rel;
       try {
+        // abort program and close REPL before auto-upload to avoid port conflicts
+        abortRunFileTerminal();
+        if (isReplOpen()) {
+          await closeReplTerminal();
+          // Wait for the system to release the port
+          await new Promise(r => setTimeout(r, 400));
+        }
         await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest));
         tree.addNode(deviceDest, false);
       }

@@ -207,10 +207,40 @@ export async function runActiveFile(): Promise<void> {
 }
 
 let runFileTerminal: vscode.Terminal | undefined;
+let runFileTerminalBusy = false;
+let runFileTerminalTrackingInitialized = false;
+
+export function initRunFileTerminalTracking(context: vscode.ExtensionContext): void {
+  if (runFileTerminalTrackingInitialized) return;
+  runFileTerminalTrackingInitialized = true;
+  context.subscriptions.push(
+    vscode.window.onDidStartTerminalShellExecution((event) => {
+      if (event.terminal === runFileTerminal && event.execution.commandLine.value.startsWith("mpremote "))
+        runFileTerminalBusy = true;
+    }),
+    vscode.window.onDidEndTerminalShellExecution((event) => {
+      runFileTerminalBusy = false;
+    })
+  );
+}
 
 /** Called when a terminal is closed; clears runFileTerminal if it was that terminal. */
 export function clearRunFileTerminalIf(terminal: vscode.Terminal): void {
-  if (terminal === runFileTerminal) runFileTerminal = undefined;
+  if (terminal === runFileTerminal) {
+    runFileTerminal = undefined;
+    runFileTerminalBusy = false;
+  }
+}
+
+/** Abort any running command in the run file terminal by sending Ctrl-C */
+export function abortRunFileTerminal(): void {
+  if (runFileTerminal && runFileTerminalBusy) {
+    const alive = vscode.window.terminals.some(t => t === runFileTerminal);
+    if (alive) {
+      runFileTerminal.sendText("\x03", false); // Ctrl-C
+    }
+    runFileTerminalBusy = false;
+  }
 }
 
 let replTerminal: vscode.Terminal | undefined;

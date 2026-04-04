@@ -21,6 +21,7 @@ const pythonInterpreter_1 = require("./pythonInterpreter");
 function activate(context) {
     // Check if mpremote is available
     (0, mpremoteCommands_1.checkMpremoteAvailability)().catch(() => { });
+    (0, mpremoteCommands_1.initRunFileTerminalTracking)(context);
     // Helper to get workspace folder or throw error
     function getWorkspaceFolder() {
         const ws = vscode.workspace.workspaceFolders?.[0];
@@ -1020,6 +1021,13 @@ function activate(context) {
         catch { }
         const deviceDest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + rel;
         try {
+            // abort program and close REPL before auto-upload to avoid port conflicts
+            (0, mpremoteCommands_1.abortRunFileTerminal)();
+            if ((0, mpremoteCommands_1.isReplOpen)()) {
+                await (0, mpremoteCommands_1.closeReplTerminal)();
+                // Wait for the system to release the port
+                await new Promise(r => setTimeout(r, 400));
+            }
             await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest));
             tree.addNode(deviceDest, false);
         }
