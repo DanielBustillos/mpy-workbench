@@ -36,6 +36,10 @@ const node_child_process_1 = require("node:child_process");
 const vscode = require("vscode");
 const path = require("node:path");
 const fs = require("node:fs");
+const pythonInterpreter_1 = require("./pythonInterpreter");
+function shellEscape(arg) {
+    return `'${arg.replace(/'/g, "'\\''")}'`;
+}
 function normalizeConnect(c) {
     if (c.startsWith("serial://"))
         return c.replace(/^serial:\/\//, "");
@@ -152,7 +156,7 @@ function runMpremote(args, opts = {}) {
     return new Promise((resolve, reject) => {
         const maxRetries = opts.retryOnFailure !== false ? 2 : 0;
         let attempt = 0;
-        const executeCommand = () => {
+        const executeCommand = async () => {
             attempt++;
             // Extract port from connect command for connection management
             let port = "";
@@ -173,13 +177,18 @@ function runMpremote(args, opts = {}) {
                 // Mark as healthy initially
                 connectionManager.markHealthy(port);
             }
-            const escapedArgs = args.map(arg => {
-                if (arg.includes('\n') || arg.includes('"') || arg.includes('$') || arg.includes('`')) {
-                    return `'${arg.replace(/'/g, "'\\''")}'`;
-                }
-                return `"${arg}"`;
-            });
-            const cmd = `mpremote ${escapedArgs.join(' ')}`;
+            const escapedArgs = args.map(shellEscape);
+            let pythonPath;
+            try {
+                const ws = vscode.workspace.workspaceFolders?.[0];
+                pythonPath = await (0, pythonInterpreter_1.getPythonPath)(ws);
+            }
+            catch (e) {
+                if (port)
+                    connectionManager.markOperationCompleted(port);
+                return reject(new Error(`Failed to resolve Python interpreter: ${String(e?.message || e)}`));
+            }
+            const cmd = `${shellEscape(pythonPath)} -m mpremote ${escapedArgs.join(' ')}`;
             const execOpts = getMpremoteExecOptions({ cwd: opts.cwd });
             const child = (0, node_child_process_1.exec)(cmd, execOpts, (err, stdout, stderr) => {
                 if (currentChild === child)
@@ -204,7 +213,7 @@ function runMpremote(args, opts = {}) {
                         errorStr.includes("failed to access") ||
                         errorStr.includes("it may be in use by another program"))) {
                         console.log(`mpremote command failed (attempt ${attempt}/${maxRetries + 1}), retrying...`);
-                        setTimeout(executeCommand, 500 * attempt); // Exponential backoff
+                        setTimeout(() => { void executeCommand(); }, 500 * attempt); // Exponential backoff
                         return;
                     }
                     return reject(new Error(emsg || "mpremote error"));
@@ -218,7 +227,7 @@ function runMpremote(args, opts = {}) {
             });
             currentChild = child;
         };
-        executeCommand();
+        void executeCommand();
     });
 }
 async function ls(p) {

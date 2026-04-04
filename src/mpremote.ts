@@ -2,6 +2,11 @@ import { execFile, ChildProcess, exec } from "node:child_process";
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { getPythonPath } from "./pythonInterpreter";
+
+function shellEscape(arg: string): string {
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
 
 function normalizeConnect(c: string): string {
   if (c.startsWith("serial://")) return c.replace(/^serial:\/\//, "");
@@ -139,7 +144,7 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
     const maxRetries = opts.retryOnFailure !== false ? 2 : 0;
     let attempt = 0;
 
-    const executeCommand = () => {
+    const executeCommand = async () => {
       attempt++;
 
       // Extract port from connect command for connection management
@@ -162,14 +167,18 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
         connectionManager.markHealthy(port);
       }
 
-      const escapedArgs = args.map(arg => {
-        if (arg.includes('\n') || arg.includes('"') || arg.includes('$') || arg.includes('`')) {
-          return `'${arg.replace(/'/g, "'\\''")}'`;
-        }
-        return `"${arg}"`;
-      });
+      const escapedArgs = args.map(shellEscape);
 
-      const cmd = `mpremote ${escapedArgs.join(' ')}`;
+      let pythonPath: string;
+      try {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        pythonPath = await getPythonPath(ws);
+      } catch (e: any) {
+        if (port) connectionManager.markOperationCompleted(port);
+        return reject(new Error(`Failed to resolve Python interpreter: ${String(e?.message || e)}`));
+      }
+
+      const cmd = `${shellEscape(pythonPath)} -m mpremote ${escapedArgs.join(' ')}`;
 
       const execOpts = getMpremoteExecOptions({ cwd: opts.cwd });
       const child = exec(cmd, execOpts, (err, stdout, stderr) => {
@@ -200,7 +209,7 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
               errorStr.includes("it may be in use by another program")
           )) {
             console.log(`mpremote command failed (attempt ${attempt}/${maxRetries + 1}), retrying...`);
-            setTimeout(executeCommand, 500 * attempt); // Exponential backoff
+            setTimeout(() => { void executeCommand(); }, 500 * attempt); // Exponential backoff
             return;
           }
 
@@ -219,7 +228,7 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
       currentChild = child;
     };
 
-    executeCommand();
+    void executeCommand();
   });
 }
 

@@ -21,6 +21,16 @@ const node_child_process_1 = require("node:child_process");
 const path = require("node:path");
 const mp = require("./mpremote");
 const mpremote_1 = require("./mpremote");
+const pythonInterpreter_1 = require("./pythonInterpreter");
+function shellEscape(arg) {
+    return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+async function buildMpremoteTerminalCommand(args) {
+    const ws = vscode.workspace.workspaceFolders?.[0];
+    const pythonPath = await (0, pythonInterpreter_1.getPythonPath)(ws);
+    const escapedArgs = args.map(shellEscape).join(" ");
+    return `${shellEscape(pythonPath)} -m mpremote ${escapedArgs}`;
+}
 /** Converts a local relative path (e.g. "sub/test1.py") to a Python import name (e.g. "sub.test1"). */
 function localRelToImportName(rel) {
     const normalized = rel.replace(/\\/g, "/");
@@ -46,8 +56,8 @@ async function restartReplInExistingTerminal() {
         if (!connect || connect === "auto")
             return;
         const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-        // Simply restart mpremote connect command
-        const cmd = `mpremote connect ${device}`;
+        // Restart using configured Python interpreter so mpremote does not depend on PATH
+        const cmd = await buildMpremoteTerminalCommand(["connect", device]);
         if (replTerminal)
             replTerminal.sendText(cmd, true);
         await new Promise(r => setTimeout(r, 200));
@@ -80,24 +90,32 @@ async function openReadmeForUpdate() {
 }
 async function checkMpremoteAvailability() {
     return new Promise((resolve, reject) => {
-        const opts = (0, mpremote_1.getMpremoteExecOptions)();
-        (0, node_child_process_1.exec)('mpremote --version', opts, (err, stdout, stderr) => {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        (0, pythonInterpreter_1.getPythonPath)(ws).then((pythonPath) => {
+            const opts = (0, mpremote_1.getMpremoteExecOptions)();
+            (0, node_child_process_1.execFile)(pythonPath, ["-m", "mpremote", "--version"], opts, (err, stdout, stderr) => {
+                if (err) {
+                    vscode.window.showWarningMessage('mpremote no encontrado en el intérprete Python activo. Instálalo con: python -m pip install mpremote');
+                    reject(err);
+                    return;
+                }
+                const output = String(stdout || '').trim() + String(stderr || '').trim();
+                const parsed = parseMpremoteVersion(output);
+                if (parsed && !isVersionAtLeast(parsed, MPREMOTE_MIN_VERSION)) {
+                    const versionStr = parsed.join('.');
+                    vscode.window.showWarningMessage(`mpremote ${versionStr} detectado. Esta extensión requiere mpremote >= 1.26 para Upload/Download/Check for differences.`, 'Cómo actualizar').then((choice) => {
+                        if (choice === 'Cómo actualizar') {
+                            openReadmeForUpdate();
+                        }
+                    });
+                }
+                resolve();
+            });
+        }).catch((err) => {
             if (err) {
-                vscode.window.showWarningMessage('mpremote no encontrado. Instálalo con: pip install mpremote');
+                vscode.window.showWarningMessage('No se pudo resolver el intérprete Python activo para validar mpremote.');
                 reject(err);
-                return;
             }
-            const output = String(stdout || '').trim() + String(stderr || '').trim();
-            const parsed = parseMpremoteVersion(output);
-            if (parsed && !isVersionAtLeast(parsed, MPREMOTE_MIN_VERSION)) {
-                const versionStr = parsed.join('.');
-                vscode.window.showWarningMessage(`mpremote ${versionStr} detectado. Esta extensión requiere mpremote >= 1.26 para Upload/Download/Check for differences.`, 'Cómo actualizar').then((choice) => {
-                    if (choice === 'Cómo actualizar') {
-                        openReadmeForUpdate();
-                    }
-                });
-            }
-            resolve();
         });
     });
 }
@@ -141,7 +159,7 @@ async function softReset() {
     // Use mpremote connect with explicit port
     const connect = vscode.workspace.getConfiguration().get("mpyWorkbench.connect", "auto");
     const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-    const cmd = `mpremote connect ${device} reset`;
+    const cmd = await buildMpremoteTerminalCommand(["connect", device, "reset"]);
     const opts = (0, mpremote_1.getMpremoteExecOptions)();
     await new Promise((resolve) => {
         (0, node_child_process_1.exec)(cmd, opts, (error, stdout, stderr) => {
@@ -178,12 +196,12 @@ async function runActiveFile() {
     let cmd;
     const ws = vscode.workspace.workspaceFolders?.[0];
     if (!ws) {
-        cmd = `mpremote connect ${device} run "${filePath}"`;
+        cmd = await buildMpremoteTerminalCommand(["connect", device, "run", filePath]);
     }
     else {
         const rel = path.relative(ws.uri.fsPath, filePath).replace(/\\/g, "/");
         if (rel.startsWith("..")) {
-            cmd = `mpremote connect ${device} run "${filePath}"`;
+            cmd = await buildMpremoteTerminalCommand(["connect", device, "run", filePath]);
         }
         else {
             const rootPath = vscode.workspace.getConfiguration().get("mpyWorkbench.rootPath", "/");
@@ -198,14 +216,14 @@ async function runActiveFile() {
             if (onBoard) {
                 const moduleName = localRelToImportName(rel);
                 if (moduleName.includes("..")) {
-                    cmd = `mpremote connect ${device} run "${filePath}"`;
+                    cmd = await buildMpremoteTerminalCommand(["connect", device, "run", filePath]);
                 }
                 else {
-                    cmd = `mpremote connect ${device} exec "import ${moduleName}"`;
+                    cmd = await buildMpremoteTerminalCommand(["connect", device, "exec", `import ${moduleName}`]);
                 }
             }
             else {
-                cmd = `mpremote connect ${device} run "${filePath}"`;
+                cmd = await buildMpremoteTerminalCommand(["connect", device, "run", filePath]);
             }
         }
     }
@@ -242,8 +260,8 @@ async function getReplTerminal(context) {
         throw new Error("Select a specific serial port first (not 'auto')");
     }
     const device = connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
-    // Simply execute mpremote connect command in terminal
-    const cmd = `mpremote connect ${device}`;
+    // Execute using configured Python interpreter so mpremote does not depend on PATH
+    const cmd = await buildMpremoteTerminalCommand(["connect", device]);
     replTerminal = vscode.window.createTerminal({
         name: "ESP32 REPL",
         shellPath: process.platform === 'win32' ? "cmd.exe" : (process.env.SHELL || '/bin/bash'),
