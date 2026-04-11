@@ -98,6 +98,19 @@ export async function serialSendCtrlC(): Promise<void> {
 }
 
 export async function stop(): Promise<void> {
+  await abortRunFileTerminal();
+  // If REPL terminal is open, prefer sending through it to avoid port conflicts
+  if (isReplOpen()) {
+    try {
+      const term = await getReplTerminal();
+      term.sendText("\x03", false); // Ctrl-C
+      vscode.window.showInformationMessage("Board: Soft reset sent via ESP32 REPL");
+      return;
+    } catch {
+      // fall back to mpremote below
+    }
+  }
+
   // Use the robust interrupt and reset function
   try {
     await robustInterruptAndReset();
@@ -108,6 +121,7 @@ export async function stop(): Promise<void> {
 }
 
 export async function softReset(): Promise<void> {
+  await abortRunFileTerminal();
   // If REPL terminal is open, prefer sending through it to avoid port conflicts
   if (isReplOpen()) {
     try {
