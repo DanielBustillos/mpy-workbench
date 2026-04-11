@@ -7,7 +7,6 @@ exports.serialSendCtrlC = serialSendCtrlC;
 exports.stop = stop;
 exports.softReset = softReset;
 exports.runActiveFile = runActiveFile;
-exports.initRunFileTerminalTracking = initRunFileTerminalTracking;
 exports.clearRunFileTerminalIf = clearRunFileTerminalIf;
 exports.abortRunFileTerminal = abortRunFileTerminal;
 exports.getReplTerminal = getReplTerminal;
@@ -222,22 +221,10 @@ async function runActiveFile() {
     }
     runFileTerminal.sendText(cmd, true);
     runFileTerminal.show(true);
+    runFileTerminalBusy = true;
 }
 let runFileTerminal;
 let runFileTerminalBusy = false;
-let runFileTerminalTrackingInitialized = false;
-function initRunFileTerminalTracking(context) {
-    if (runFileTerminalTrackingInitialized)
-        return;
-    runFileTerminalTrackingInitialized = true;
-    context.subscriptions.push(vscode.window.onDidStartTerminalShellExecution((event) => {
-        if (event.terminal === runFileTerminal && event.execution.commandLine.value.startsWith("mpremote "))
-            runFileTerminalBusy = true;
-    }), vscode.window.onDidEndTerminalShellExecution((event) => {
-        if (event.terminal === runFileTerminal)
-            runFileTerminalBusy = false;
-    }));
-}
 /** Called when a terminal is closed; clears runFileTerminal if it was that terminal. */
 function clearRunFileTerminalIf(terminal) {
     if (terminal === runFileTerminal) {

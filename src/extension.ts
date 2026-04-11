@@ -30,15 +30,13 @@ import {
   toLocalRelative,
   toDevicePath,
   clearRunFileTerminalIf,
-  abortRunFileTerminal,
-  initRunFileTerminalTracking
+  abortRunFileTerminal
 } from "./mpremoteCommands";
 import { clearPythonCache } from "./pythonInterpreter";
 
 export function activate(context: vscode.ExtensionContext) {
   // Check if mpremote is available
   checkMpremoteAvailability().catch(() => {});
-  initRunFileTerminalTracking(context);
   // Helper to get workspace folder or throw error
   function getWorkspaceFolder(): vscode.WorkspaceFolder {
     const ws = vscode.workspace.workspaceFolders?.[0];

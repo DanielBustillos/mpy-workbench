@@ -21,7 +21,6 @@ const pythonInterpreter_1 = require("./pythonInterpreter");
 function activate(context) {
     // Check if mpremote is available
     (0, mpremoteCommands_1.checkMpremoteAvailability)().catch(() => { });
-    (0, mpremoteCommands_1.initRunFileTerminalTracking)(context);
     // Helper to get workspace folder or throw error
     function getWorkspaceFolder() {
         const ws = vscode.workspace.workspaceFolders?.[0];
