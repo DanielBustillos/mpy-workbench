@@ -23,7 +23,11 @@ const mp = require("./mpremote");
 const mpremote_1 = require("./mpremote");
 const pythonInterpreter_1 = require("./pythonInterpreter");
 function shellEscape(arg) {
-    return `'${arg.replace(/'/g, "'\\''")}'`;
+    const escaped = arg.replace(/"/g, '\\"');
+    if (arg.includes(" ")) {
+        return `"${escaped}"`;
+    }
+    return escaped;
 }
 async function buildMpremoteTerminalCommand(args) {
     const ws = vscode.workspace.workspaceFolders?.[0];
