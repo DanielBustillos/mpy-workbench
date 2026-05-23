@@ -38,7 +38,11 @@ const path = require("node:path");
 const fs = require("node:fs");
 const pythonInterpreter_1 = require("./pythonInterpreter");
 function shellEscape(arg) {
-    return `'${arg.replace(/'/g, "'\\''")}'`;
+    const escaped = arg.replace(/"/g, '\\"');
+    if (arg.includes(" ")) {
+        return `"${escaped}"`;
+    }
+    return escaped;
 }
 function normalizeConnect(c) {
     if (c.startsWith("serial://"))

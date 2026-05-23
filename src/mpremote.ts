@@ -5,7 +5,11 @@ import * as fs from "node:fs";
 import { getPythonPath } from "./pythonInterpreter";
 
 function shellEscape(arg: string): string {
-  return `'${arg.replace(/'/g, "'\\''")}'`;
+  const escaped = arg.replace(/"/g, '\\"');
+  if (arg.includes(" ")) {
+    return `"${escaped}"`;
+  }
+  return escaped;
 }
 
 function normalizeConnect(c: string): string {
