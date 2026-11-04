@@ -27,6 +27,7 @@ import {
   toLocalRelative,
   toDevicePath,
   getSyncRoot,
+  autoStopIfEnabled,
   clearRunFileTerminalIf
 } from "./mpremoteCommands";
 import { clearPythonCache } from "./pythonInterpreter";
@@ -279,6 +280,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (opts.preempt !== false) {
       opQueue = Promise.resolve();
     }
+    // Optionally stop a program started with "Run file" so it releases the port
+    await autoStopIfEnabled();
     // If auto-suspend disabled or explicitly skipping for this view action, run without ensureIdle/REPL juggling
     if (!enabled || skipIdleOnce) {
       skipIdleOnce = false;

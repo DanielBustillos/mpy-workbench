@@ -603,6 +603,11 @@
           "type": "string",
           "default": "",
           "description": "Local folder (relative to the workspace) that mirrors the board's root path, e.g. \"device\". Leave empty to sync the whole workspace. .mpyignore patterns are relative to this folder."
+        },
+        "mpyWorkbench.autoStopBeforeBoardAction": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically stop a program started with \"Run file\" (Ctrl-C) before uploads, auto-sync on save, Run file, Stop and Soft reset, so the serial port is free. When disabled, stop the program yourself first (Thonny-style)."
         }
       }
     },

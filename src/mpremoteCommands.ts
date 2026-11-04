@@ -140,6 +140,7 @@ export async function checkMpremoteAvailability(): Promise<void> {
 }
 
 export async function serialSendCtrlC(): Promise<void> {
+  await autoStopIfEnabled();
   // Use robust interrupt method
   try {
     await robustInterrupt();
@@ -150,6 +151,7 @@ export async function serialSendCtrlC(): Promise<void> {
 }
 
 export async function stop(): Promise<void> {
+  await autoStopIfEnabled();
   // Use the robust interrupt and reset function
   try {
     await robustInterruptAndReset();
@@ -160,6 +162,7 @@ export async function stop(): Promise<void> {
 }
 
 export async function softReset(): Promise<void> {
+  await autoStopIfEnabled();
   // If REPL terminal is open, prefer sending through it to avoid port conflicts
   if (isReplOpen()) {
     try {
@@ -204,6 +207,9 @@ export async function runActiveFile(): Promise<void> {
   }
 
   const filePath = ed.document.uri.fsPath;
+
+  // Optionally stop a program started by a previous "Run file"
+  await autoStopIfEnabled();
 
   // If the REPL terminal is open, close it before executing
   if (isReplOpen()) {
@@ -254,13 +260,47 @@ export async function runActiveFile(): Promise<void> {
   }
   runFileTerminal.sendText(cmd, true);
   runFileTerminal.show(true);
+  runFileTerminalBusy = true;
 }
 
 let runFileTerminal: vscode.Terminal | undefined;
+/** True after "Run file" started a program that has not been aborted yet. */
+let runFileTerminalBusy = false;
+
+function autoStopEnabled(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>("mpyWorkbench.autoStopBeforeBoardAction", false);
+}
+
+/**
+ * Stop a program started with "Run file" by sending Ctrl-C to its terminal.
+ * mpremote exits on Ctrl-C and releases the serial port. Sending it to an idle
+ * shell is harmless (it only clears the prompt line).
+ */
+export async function abortRunFileTerminal(): Promise<void> {
+  if (!runFileTerminal || !runFileTerminalBusy) return;
+  runFileTerminalBusy = false;
+  if (!vscode.window.terminals.some(t => t === runFileTerminal)) return;
+  runFileTerminal.sendText("\x03", false); // Ctrl-C
+  // Give mpremote time to exit and the OS time to release the port
+  await new Promise(r => setTimeout(r, 500));
+  log.debug("Aborted the running 'Run file' program before a board action");
+}
+
+/**
+ * With mpyWorkbench.autoStopBeforeBoardAction enabled, stop the running program
+ * so the next board action (upload, sync, run, stop, reset) gets the serial port.
+ * Disabled by default: the user stops the program explicitly (Thonny-style).
+ */
+export async function autoStopIfEnabled(): Promise<void> {
+  if (autoStopEnabled()) await abortRunFileTerminal();
+}
 
 /** Called when a terminal is closed; clears runFileTerminal if it was that terminal. */
 export function clearRunFileTerminalIf(terminal: vscode.Terminal): void {
-  if (terminal === runFileTerminal) runFileTerminal = undefined;
+  if (terminal === runFileTerminal) {
+    runFileTerminal = undefined;
+    runFileTerminalBusy = false;
+  }
 }
 
 let replTerminal: vscode.Terminal | undefined;

@@ -40,6 +40,10 @@ While a serial port is selected (Thonny-style, disable with `mpyWorkbench.thonny
 - `F5` — run the active Python file on the board
 - `Ctrl+F2` (`Cmd+F2` on macOS) — stop the running program
 
+## Port busy while a program runs
+
+A program started with **Run file** keeps the serial port open, so uploads and auto-sync fail until you stop it. Enable `mpyWorkbench.autoStopBeforeBoardAction` to stop it automatically (Ctrl-C) before uploads, auto-sync on save, Run file, Stop and Soft reset. It is off by default so nothing interrupts a running program without you asking.
+
 ## Useful commands (Command Palette)
 
 - `MPY Workbench: Refresh` — refresh the file tree
