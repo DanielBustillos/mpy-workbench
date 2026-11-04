@@ -1,12 +1,9 @@
-import { execFile, ChildProcess, exec } from "node:child_process";
+import { execFile, ChildProcess } from "node:child_process";
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { getPythonPath } from "./pythonInterpreter";
-
-function shellEscape(arg: string): string {
-  return `'${arg.replace(/'/g, "'\\''")}'`;
-}
+import { log } from "./logger";
 
 function normalizeConnect(c: string): string {
   if (c.startsWith("serial://")) return c.replace(/^serial:\/\//, "");
@@ -15,11 +12,11 @@ function normalizeConnect(c: string): string {
   // On macOS, add /dev/ prefix if it's missing and looks like a cu.* device
   if (c.startsWith("cu.") && !c.startsWith("/dev/")) {
     const normalized = `/dev/${c}`;
-    console.log(`[DEBUG] normalizeConnect: Added /dev/ prefix: ${c} -> ${normalized}`);
+    log.debug(`normalizeConnect: Added /dev/ prefix: ${c} -> ${normalized}`);
     return normalized;
   }
 
-  console.log(`[DEBUG] normalizeConnect: Using as-is: ${c}`);
+  log.debug(`normalizeConnect: Using as-is: ${c}`);
   return c;
 }
 
@@ -66,7 +63,6 @@ class ConnectionManager {
     if (connection) {
       connection.isHealthy = true;
       connection.lastUsed = Date.now();
-      connection.operationInProgress = false; // Operation completed
     }
   }
 
@@ -96,7 +92,7 @@ class ConnectionManager {
   private cleanup(): void {
     const now = Date.now();
     for (const [port, connection] of this.activeConnections.entries()) {
-      if ((now - connection.lastUsed) > this.CONNECTION_TIMEOUT) {
+      if (!connection.operationInProgress && (now - connection.lastUsed) > this.CONNECTION_TIMEOUT) {
         this.activeConnections.delete(port);
       }
     }
@@ -139,14 +135,16 @@ export function getMpremoteExecOptions(overrides?: { cwd?: string }): { encoding
   };
 }
 
+/** Maximum time to wait for another operation on the same port before giving up. */
+const MAX_PORT_WAIT_MS = 120_000;
+
 export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure?: boolean } = {}): Promise<{ stdout: string; stderr: string }>{
   return new Promise((resolve, reject) => {
     const maxRetries = opts.retryOnFailure !== false ? 2 : 0;
     let attempt = 0;
+    let waitStarted = 0;
 
     const executeCommand = async () => {
-      attempt++;
-
       // Extract port from connect command for connection management
       let port = "";
       const connectIndex = args.indexOf("connect");
@@ -154,20 +152,22 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
         port = args[connectIndex + 1];
         // Check if operation is already in progress on this port
         if (connectionManager.isOperationInProgress(port)) {
-          console.log(`[DEBUG] runMpremote: Operation already in progress on port ${port}, queuing...`);
-          // Wait a bit and retry
-          setTimeout(executeCommand, 100);
+          if (waitStarted === 0) waitStarted = Date.now();
+          if (Date.now() - waitStarted > MAX_PORT_WAIT_MS) {
+            // The previous operation never released the port (e.g. a hung process).
+            // Fail instead of polling forever.
+            return reject(new Error(`Timed out after ${MAX_PORT_WAIT_MS / 1000}s waiting for another operation on ${port} to finish. Use "Cancel all tasks" and try again.`));
+          }
+          log.debug(`runMpremote: operation already in progress on port ${port}, queuing...`);
+          setTimeout(() => { void executeCommand(); }, 100);
           return;
         }
-        // Get connection info from manager
-        const connection = connectionManager.getConnection(port);
-        // Mark operation as started
-        connectionManager.markOperationStarted(port);
-        // Mark as healthy initially
+        waitStarted = 0;
+        connectionManager.getConnection(port);
         connectionManager.markHealthy(port);
+        connectionManager.markOperationStarted(port);
       }
-
-      const escapedArgs = args.map(shellEscape);
+      attempt++;
 
       let pythonPath: string;
       try {
@@ -178,10 +178,10 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
         return reject(new Error(`Failed to resolve Python interpreter: ${String(e?.message || e)}`));
       }
 
-      const cmd = `${shellEscape(pythonPath)} -m mpremote ${escapedArgs.join(' ')}`;
-
-      const execOpts = getMpremoteExecOptions({ cwd: opts.cwd });
-      const child = exec(cmd, execOpts, (err, stdout, stderr) => {
+      // execFile + argument array: no shell is involved, so paths, port names and
+      // code snippets are passed verbatim on every platform (no quoting/injection issues).
+      const execOpts = { ...getMpremoteExecOptions({ cwd: opts.cwd }), maxBuffer: 64 * 1024 * 1024 };
+      const child = execFile(pythonPath, ["-m", "mpremote", ...args], execOpts, (err, stdout, stderr) => {
         if (currentChild === child) currentChild = null;
 
         if (err) {
@@ -208,7 +208,7 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
               errorStr.includes("failed to access") ||
               errorStr.includes("it may be in use by another program")
           )) {
-            console.log(`mpremote command failed (attempt ${attempt}/${maxRetries + 1}), retrying...`);
+            log.debug(`mpremote command failed (attempt ${attempt}/${maxRetries + 1}), retrying...`);
             setTimeout(() => { void executeCommand(); }, 500 * attempt); // Exponential backoff
             return;
           }
@@ -219,7 +219,7 @@ export function runMpremote(args: string[], opts: { cwd?: string; retryOnFailure
         // Mark connection as healthy on success
         if (port) {
           connectionManager.markHealthy(port);
-          // markHealthy already sets operationInProgress to false
+          connectionManager.markOperationCompleted(port);
         }
 
         resolve({ stdout: String(stdout), stderr: String(stderr) });
@@ -260,14 +260,14 @@ const TREE_CACHE_DURATION = 30000; // 30 seconds
 async function populateFileTreeCache(): Promise<void> {
   try {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
-    console.log(`[DEBUG] populateFileTreeCache: Fetching complete file tree`);
+    log.debug(`populateFileTreeCache: Fetching complete file tree`);
     const { stdout } = await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: true });
 
-    console.log(`[DEBUG] populateFileTreeCache: Raw tree output:\n${stdout}`);
+    log.debug(`populateFileTreeCache: Raw tree output:\n${stdout}`);
 
     // Parse into hierarchical structure
     const parsedLines = parseTreeLines(String(stdout || ""));
-    console.log(`[DEBUG] populateFileTreeCache: Parsed ${parsedLines.length} lines:`, parsedLines.map(l => `${l.fullPath} (depth: ${l.depth})`));
+    log.debug(`populateFileTreeCache: Parsed ${parsedLines.length} lines:`, parsedLines.map(l => `${l.fullPath} (depth: ${l.depth})`));
 
     // Save parsed paths to file in .mpy-workbench only when workspace is initialized
     try {
@@ -281,22 +281,22 @@ async function populateFileTreeCache(): Promise<void> {
             fs.mkdirSync(workbenchDir, { recursive: true });
           }
           fs.writeFileSync(filePath, JSON.stringify(parsedLines, null, 2));
-          console.log(`[DEBUG] Saved ${parsedLines.length} parsed paths to ${filePath}`);
+          log.debug(`Saved ${parsedLines.length} parsed paths to ${filePath}`);
         }
       }
     } catch (error) {
-      console.error(`[DEBUG] Failed to save parsed paths:`, error);
+      log.error(`Failed to save parsed paths:`, error);
     }
 
     const treeRoot = buildTreeFromParsedLines(parsedLines);
-    console.log(`[DEBUG] populateFileTreeCache: Built tree with ${treeRoot.children.length} root children`);
+    log.debug(`populateFileTreeCache: Built tree with ${treeRoot.children.length} root children`);
 
     globalFileTreeCache = treeRoot;
     lastTreeUpdate = Date.now();
 
-    console.log(`[DEBUG] populateFileTreeCache: Cache populated with ${parsedLines.length} items`);
+    log.debug(`populateFileTreeCache: Cache populated with ${parsedLines.length} items`);
   } catch (error) {
-    console.error(`[DEBUG] populateFileTreeCache: Failed to populate cache:`, error);
+    log.error(`populateFileTreeCache: Failed to populate cache:`, error);
     throw error;
   }
 }
@@ -312,38 +312,38 @@ function isCacheValid(): boolean {
 function getEntriesFromCache(targetPath: string): { name: string; isDir: boolean }[] | null {
   if (!globalFileTreeCache) return null;
 
-  console.log(`[DEBUG] getEntriesFromCache: Looking for ${targetPath} in cache`);
-  console.log(`[DEBUG] getEntriesFromCache: Cache has ${globalFileTreeCache.children.length} root children`);
+  log.debug(`getEntriesFromCache: Looking for ${targetPath} in cache`);
+  log.debug(`getEntriesFromCache: Cache has ${globalFileTreeCache.children.length} root children`);
 
   if (targetPath === "/") {
     const result = globalFileTreeCache.children.map(child => ({
       name: child.name,
       isDir: child.isDir
     }));
-    console.log(`[DEBUG] getEntriesFromCache: Found ${result.length} root items:`, result.map(r => `${r.name} (${r.isDir ? 'dir' : 'file'})`));
+    log.debug(`getEntriesFromCache: Found ${result.length} root items:`, result.map(r => `${r.name} (${r.isDir ? 'dir' : 'file'})`));
     return result;
   }
 
   // Find the target directory node
   const pathParts = targetPath.split("/").filter(p => p);
-  console.log(`[DEBUG] getEntriesFromCache: Path parts for ${targetPath}:`, pathParts);
+  log.debug(`getEntriesFromCache: Path parts for ${targetPath}:`, pathParts);
 
   let currentNode = globalFileTreeCache;
-  console.log(`[DEBUG] getEntriesFromCache: Starting from root node`);
+  log.debug(`getEntriesFromCache: Starting from root node`);
 
   for (let i = 0; i < pathParts.length; i++) {
     const part = pathParts[i];
-    console.log(`[DEBUG] getEntriesFromCache: Looking for '${part}' in ${currentNode.children.length} children`);
-    console.log(`[DEBUG] getEntriesFromCache: Available children:`, currentNode.children.map(c => c.name));
+    log.debug(`getEntriesFromCache: Looking for '${part}' in ${currentNode.children.length} children`);
+    log.debug(`getEntriesFromCache: Available children:`, currentNode.children.map(c => c.name));
 
     const found = currentNode.children.find(child => child.name === part);
     if (!found) {
-      console.log(`[DEBUG] getEntriesFromCache: Path ${targetPath} not found in cache - '${part}' not found`);
-      console.log(`[DEBUG] getEntriesFromCache: Current node children:`, currentNode.children.map(c => `${c.name} (${c.isDir ? 'dir' : 'file'})`));
+      log.debug(`getEntriesFromCache: Path ${targetPath} not found in cache - '${part}' not found`);
+      log.debug(`getEntriesFromCache: Current node children:`, currentNode.children.map(c => `${c.name} (${c.isDir ? 'dir' : 'file'})`));
       return null;
     }
     currentNode = found;
-    console.log(`[DEBUG] getEntriesFromCache: Found '${part}', continuing to next level`);
+    log.debug(`getEntriesFromCache: Found '${part}', continuing to next level`);
   }
 
   const result = currentNode.children.map(child => ({
@@ -351,7 +351,7 @@ function getEntriesFromCache(targetPath: string): { name: string; isDir: boolean
     isDir: child.isDir
   }));
 
-  console.log(`[DEBUG] getEntriesFromCache: Found ${result.length} items for ${targetPath}:`, result.map(r => `${r.name} (${r.isDir ? 'dir' : 'file'})`));
+  log.debug(`getEntriesFromCache: Found ${result.length} items for ${targetPath}:`, result.map(r => `${r.name} (${r.isDir ? 'dir' : 'file'})`));
   return result;
 }
 
@@ -359,12 +359,12 @@ function getEntriesFromCache(targetPath: string): { name: string; isDir: boolean
 export function clearFileTreeCache(): void {
   globalFileTreeCache = null;
   lastTreeUpdate = 0;
-  console.log(`[DEBUG] clearFileTreeCache: Cache cleared`);
+  log.debug(`clearFileTreeCache: Cache cleared`);
 }
 
 // Force refresh the cache
 export async function refreshFileTreeCache(): Promise<void> {
-  console.log(`[DEBUG] refreshFileTreeCache: Forcing cache refresh`);
+  log.debug(`refreshFileTreeCache: Forcing cache refresh`);
   globalFileTreeCache = null;
   lastTreeUpdate = 0;
   await populateFileTreeCache();
@@ -374,34 +374,34 @@ export async function refreshFileTreeCache(): Promise<void> {
 export async function debugTreeParsing(): Promise<void> {
   try {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
-    console.log(`[DEBUG] debugTreeParsing: Testing tree command manually`);
+    log.debug(`debugTreeParsing: Testing tree command manually`);
 
     // Get raw tree output
     const { stdout } = await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: true });
-    console.log(`[DEBUG] debugTreeParsing: Raw tree output:\n${stdout}`);
+    log.debug(`debugTreeParsing: Raw tree output:\n${stdout}`);
 
     // Parse it
     const parsedLines = parseTreeLines(String(stdout || ""));
-    console.log(`[DEBUG] debugTreeParsing: Parsed ${parsedLines.length} lines:`, parsedLines);
+    log.debug(`debugTreeParsing: Parsed ${parsedLines.length} lines:`, parsedLines);
 
     // Build tree
     const treeRoot = buildTreeFromParsedLines(parsedLines);
-    console.log(`[DEBUG] debugTreeParsing: Built tree with ${treeRoot.children.length} root children`);
+    log.debug(`debugTreeParsing: Built tree with ${treeRoot.children.length} root children`);
 
     // Test getting entries for root
     const rootEntries = getEntriesFromCache("/");
-    console.log(`[DEBUG] debugTreeParsing: Root entries:`, rootEntries);
+    log.debug(`debugTreeParsing: Root entries:`, rootEntries);
 
     // Test getting entries for first subdirectory if exists
     if (treeRoot.children.length > 0 && treeRoot.children[0].isDir) {
       const subPath = `/${treeRoot.children[0].name}`;
-      console.log(`[DEBUG] debugTreeParsing: Testing subpath: ${subPath}`);
+      log.debug(`debugTreeParsing: Testing subpath: ${subPath}`);
       const subEntries = getEntriesFromCache(subPath);
-      console.log(`[DEBUG] debugTreeParsing: Sub entries for ${subPath}:`, subEntries);
+      log.debug(`debugTreeParsing: Sub entries for ${subPath}:`, subEntries);
     }
 
   } catch (error) {
-    console.error(`[DEBUG] debugTreeParsing: Error:`, error);
+    log.error(`debugTreeParsing: Error:`, error);
   }
 }
 
@@ -409,70 +409,70 @@ export async function debugTreeParsing(): Promise<void> {
 export async function debugFilesystemStatus(): Promise<void> {
   try {
     const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
-    console.log(`[DEBUG] debugFilesystemStatus: Checking filesystem status`);
+    log.debug(`debugFilesystemStatus: Checking filesystem status`);
 
     // Check root filesystem stat
-    console.log(`[DEBUG] debugFilesystemStatus: Checking root filesystem stat...`);
+    log.debug(`debugFilesystemStatus: Checking root filesystem stat...`);
     const { stdout: statOutput } = await runMpremote(["connect", connect, "fs", "stat", "/"], { retryOnFailure: false });
-    console.log(`[DEBUG] debugFilesystemStatus: Root filesystem stat:\n${statOutput}`);
+    log.debug(`debugFilesystemStatus: Root filesystem stat:\n${statOutput}`);
 
     // Try to check mount information
-    console.log(`[DEBUG] debugFilesystemStatus: Checking mount information...`);
+    log.debug(`debugFilesystemStatus: Checking mount information...`);
     try {
       const { stdout: mountOutput } = await runMpremote(["connect", connect, "exec", "import os; print(os.listdir('/'))"], { retryOnFailure: false });
-      console.log(`[DEBUG] debugFilesystemStatus: Root directory listing:\n${mountOutput}`);
+      log.debug(`debugFilesystemStatus: Root directory listing:\n${mountOutput}`);
     } catch (mountError) {
-      console.error(`[DEBUG] debugFilesystemStatus: Could not list root directory:`, mountError);
+      log.error(`debugFilesystemStatus: Could not list root directory:`, mountError);
     }
 
     // Try to check if we can write to root
-    console.log(`[DEBUG] debugFilesystemStatus: Testing write permissions...`);
+    log.debug(`debugFilesystemStatus: Testing write permissions...`);
     try {
       await runMpremote(["connect", connect, "exec", "f = open('test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
-      console.log(`[DEBUG] debugFilesystemStatus: ✓ Write test to root succeeded`);
+      log.debug(`debugFilesystemStatus: ✓ Write test to root succeeded`);
 
       // Clean up test file
       try {
         await runMpremote(["connect", connect, "exec", "import os; os.remove('test_write.tmp')"], { retryOnFailure: false });
-        console.log(`[DEBUG] debugFilesystemStatus: ✓ Test file cleanup succeeded`);
+        log.debug(`debugFilesystemStatus: ✓ Test file cleanup succeeded`);
       } catch (cleanupError) {
-        console.log(`[DEBUG] debugFilesystemStatus: ⚠ Test file cleanup failed:`, cleanupError);
+        log.debug(`debugFilesystemStatus: ⚠ Test file cleanup failed:`, cleanupError);
       }
     } catch (writeError) {
-      console.error(`[DEBUG] debugFilesystemStatus: ✗ Write test to root failed:`, writeError);
+      log.error(`debugFilesystemStatus: ✗ Write test to root failed:`, writeError);
     }
 
     // Try to check if we can write to a subdirectory
-    console.log(`[DEBUG] debugFilesystemStatus: Testing write permissions in subdirectory...`);
+    log.debug(`debugFilesystemStatus: Testing write permissions in subdirectory...`);
     try {
       await runMpremote(["connect", connect, "exec", "import os; os.mkdir('test_dir')"], { retryOnFailure: false });
-      console.log(`[DEBUG] debugFilesystemStatus: ✓ Directory creation succeeded`);
+      log.debug(`debugFilesystemStatus: ✓ Directory creation succeeded`);
 
       await runMpremote(["connect", connect, "exec", "f = open('test_dir/test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
-      console.log(`[DEBUG] debugFilesystemStatus: ✓ Write test in subdirectory succeeded`);
+      log.debug(`debugFilesystemStatus: ✓ Write test in subdirectory succeeded`);
 
       // Clean up
       try {
         await runMpremote(["connect", connect, "exec", "import os; os.remove('test_dir/test_write.tmp'); os.rmdir('test_dir')"], { retryOnFailure: false });
-        console.log(`[DEBUG] debugFilesystemStatus: ✓ Cleanup succeeded`);
+        log.debug(`debugFilesystemStatus: ✓ Cleanup succeeded`);
       } catch (cleanupError) {
-        console.log(`[DEBUG] debugFilesystemStatus: ⚠ Cleanup failed:`, cleanupError);
+        log.debug(`debugFilesystemStatus: ⚠ Cleanup failed:`, cleanupError);
       }
     } catch (subdirError) {
-      console.error(`[DEBUG] debugFilesystemStatus: ✗ Subdirectory write test failed:`, subdirError);
+      log.error(`debugFilesystemStatus: ✗ Subdirectory write test failed:`, subdirError);
     }
 
     // Check MicroPython version and build
-    console.log(`[DEBUG] debugFilesystemStatus: Checking MicroPython version...`);
+    log.debug(`debugFilesystemStatus: Checking MicroPython version...`);
     try {
       const { stdout: versionOutput } = await runMpremote(["connect", connect, "exec", "import sys; print('MicroPython version:', sys.version)"], { retryOnFailure: false });
-      console.log(`[DEBUG] debugFilesystemStatus: Version info:\n${versionOutput}`);
+      log.debug(`debugFilesystemStatus: Version info:\n${versionOutput}`);
     } catch (versionError) {
-      console.error(`[DEBUG] debugFilesystemStatus: Could not get version:`, versionError);
+      log.error(`debugFilesystemStatus: Could not get version:`, versionError);
     }
 
   } catch (error) {
-    console.error(`[DEBUG] debugFilesystemStatus: Error during filesystem check:`, error);
+    log.error(`debugFilesystemStatus: Error during filesystem check:`, error);
   }
 }
 
@@ -513,23 +513,23 @@ function parseTreeLines(treeOutput: string): Array<{fullPath: string, name: stri
   const result: Array<{fullPath: string, name: string, isDir: boolean, depth: number}> = [];
   const dirStack: string[] = [];
 
-  console.log(`[DEBUG] Parsing ${lines.length} tree lines`);
+  log.debug(`Parsing ${lines.length} tree lines`);
 
   for (const line of lines) {
     // Skip irrelevant lines
     if (!line.trim() || line.includes('tree') || line === ':/' || line === ':') continue;
 
-    console.log(`[DEBUG] Processing: "${line}"`);
+    log.debug(`Processing: "${line}"`);
 
     // Parse the line to get level and name
     const parseResult = parseTreeLine(line);
     if (!parseResult) {
-      console.log(`[DEBUG] Could not parse line: "${line}"`);
+      log.debug(`Could not parse line: "${line}"`);
       continue;
     }
 
     const { level, name } = parseResult;
-    console.log(`[DEBUG] Parsed level: ${level}, name: "${name}"`);
+    log.debug(`Parsed level: ${level}, name: "${name}"`);
 
     // Adjust directory stack to match current level
     // Keep only elements up to the current level
@@ -537,22 +537,22 @@ function parseTreeLines(treeOutput: string): Array<{fullPath: string, name: stri
 
     // Build full path
     const fullPath = dirStack.length === 0 ? `/${name}` : `${dirStack[dirStack.length - 1]}/${name}`;
-    console.log(`[DEBUG] Built full path: ${fullPath}`);
+    log.debug(`Built full path: ${fullPath}`);
 
     // Determine if it's a directory
     const isDir = determineIsDirectory(name, lines, lines.indexOf(line));
-    console.log(`[DEBUG] Final determination: ${name} is ${isDir ? 'directory' : 'file'}`);
+    log.debug(`Final determination: ${name} is ${isDir ? 'directory' : 'file'}`);
 
     result.push({ fullPath, name, isDir, depth: level });
 
     // Add to directory stack if it's a directory
     if (isDir) {
       dirStack.push(fullPath);
-      console.log(`[DEBUG] Added to stack: ${fullPath} (stack: [${dirStack.join(', ')}])`);
+      log.debug(`Added to stack: ${fullPath} (stack: [${dirStack.join(', ')}])`);
     }
   }
 
-  console.log(`[DEBUG] Parsed ${result.length} items:`, result.map(r => `${r.fullPath} (${r.isDir ? 'dir' : 'file'})`));
+  log.debug(`Parsed ${result.length} items:`, result.map(r => `${r.fullPath} (${r.isDir ? 'dir' : 'file'})`));
   return result;
 }
 
@@ -651,7 +651,7 @@ function determineIsDirectory(name: string, allLines: string[], currentIndex: nu
 
 // Build tree structure from parsed lines (helper function)
 function buildTreeFromParsedLines(parsedLines: Array<{fullPath: string, name: string, isDir: boolean, depth: number}>): TreeNode {
-  console.log(`[DEBUG] buildTreeFromParsedLines: Building tree from ${parsedLines.length} parsed lines`);
+  log.debug(`buildTreeFromParsedLines: Building tree from ${parsedLines.length} parsed lines`);
 
   const root: TreeNode = {
     name: "",
@@ -664,17 +664,17 @@ function buildTreeFromParsedLines(parsedLines: Array<{fullPath: string, name: st
   nodeMap.set("/", root);
 
   for (const item of parsedLines) {
-    console.log(`[DEBUG] buildTreeFromParsedLines: Processing ${item.fullPath} (depth: ${item.depth})`);
+    log.debug(`buildTreeFromParsedLines: Processing ${item.fullPath} (depth: ${item.depth})`);
 
     const pathParts = item.fullPath.split('/').filter(p => p);
     const parentPath = pathParts.length > 1 ? '/' + pathParts.slice(0, -1).join('/') : '/';
 
-    console.log(`[DEBUG] buildTreeFromParsedLines: Path parts: [${pathParts.join(', ')}], parent: ${parentPath}`);
+    log.debug(`buildTreeFromParsedLines: Path parts: [${pathParts.join(', ')}], parent: ${parentPath}`);
 
     const parentNode = nodeMap.get(parentPath);
 
     if (parentNode) {
-      console.log(`[DEBUG] buildTreeFromParsedLines: Found parent ${parentPath}, adding ${item.name}`);
+      log.debug(`buildTreeFromParsedLines: Found parent ${parentPath}, adding ${item.name}`);
 
       const newNode: TreeNode = {
         name: item.name,
@@ -687,19 +687,19 @@ function buildTreeFromParsedLines(parsedLines: Array<{fullPath: string, name: st
 
       if (item.isDir) {
         nodeMap.set(item.fullPath, newNode);
-        console.log(`[DEBUG] buildTreeFromParsedLines: Added directory ${item.fullPath} to nodeMap`);
+        log.debug(`buildTreeFromParsedLines: Added directory ${item.fullPath} to nodeMap`);
       }
 
-      console.log(`[DEBUG] buildTreeFromParsedLines: Added ${item.name} to ${parentPath}`);
+      log.debug(`buildTreeFromParsedLines: Added ${item.name} to ${parentPath}`);
     } else {
-      console.log(`[DEBUG] buildTreeFromParsedLines: Parent ${parentPath} not found for ${item.fullPath}`);
+      log.debug(`buildTreeFromParsedLines: Parent ${parentPath} not found for ${item.fullPath}`);
     }
   }
 
-  console.log(`[DEBUG] buildTreeFromParsedLines: Final tree structure:`);
+  log.debug(`buildTreeFromParsedLines: Final tree structure:`);
   const printTree = (node: TreeNode, indent = 0) => {
     const prefix = '  '.repeat(indent);
-    console.log(`${prefix}${node.name || '/'} (${node.isDir ? 'dir' : 'file'}) - ${node.children.length} children`);
+    log.debug(`${prefix}${node.name || '/'} (${node.isDir ? 'dir' : 'file'}) - ${node.children.length} children`);
     for (const child of node.children) {
       printTree(child, indent + 1);
     }
@@ -711,46 +711,46 @@ function buildTreeFromParsedLines(parsedLines: Array<{fullPath: string, name: st
 
 // Helper function to parse tree output and extract entries for a specific path
 function parseTreeForPath(treeOutput: string, targetPath: string): { name: string; isDir: boolean }[] {
-  console.log(`[DEBUG] parseTreeForPath: Parsing tree for path ${targetPath}`);
+  log.debug(`parseTreeForPath: Parsing tree for path ${targetPath}`);
 
   try {
     // Parse tree into flat list with full paths
     const parsedLines = parseTreeLines(treeOutput);
 
     // Filter items that belong to the target path
-    console.log(`[DEBUG] Filtering ${parsedLines.length} parsed lines for target path: ${targetPath}`);
-    console.log(`[DEBUG] All parsed items:`, parsedLines.map(item => `${item.fullPath} (depth: ${item.depth})`));
+    log.debug(`Filtering ${parsedLines.length} parsed lines for target path: ${targetPath}`);
+    log.debug(`All parsed items:`, parsedLines.map(item => `${item.fullPath} (depth: ${item.depth})`));
 
     const targetItems = parsedLines.filter(item => {
-      console.log(`[DEBUG] Checking item: ${item.fullPath} (depth: ${item.depth})`);
+      log.debug(`Checking item: ${item.fullPath} (depth: ${item.depth})`);
 
       if (targetPath === "/") {
         // For root, get only items at depth 0 (direct children of root)
         const matches = item.depth === 0;
-        console.log(`[DEBUG] Root filter: ${item.fullPath} depth ${item.depth} -> ${matches ? 'KEEP' : 'FILTER OUT'}`);
+        log.debug(`Root filter: ${item.fullPath} depth ${item.depth} -> ${matches ? 'KEEP' : 'FILTER OUT'}`);
         return matches;
       } else {
         // For subdirectories, get direct children of the target path
         const targetPathParts = targetPath.split('/').filter(p => p);
         const itemPathParts = item.fullPath.split('/').filter(p => p);
 
-        console.log(`[DEBUG] Subdir filter: target parts: [${targetPathParts.join(', ')}], item parts: [${itemPathParts.join(', ')}]`);
+        log.debug(`Subdir filter: target parts: [${targetPathParts.join(', ')}], item parts: [${itemPathParts.join(', ')}]`);
 
         // Must be exactly one level deeper than target
         if (itemPathParts.length !== targetPathParts.length + 1) {
-          console.log(`[DEBUG] Wrong depth: expected ${targetPathParts.length + 1}, got ${itemPathParts.length} -> FILTER OUT`);
+          log.debug(`Wrong depth: expected ${targetPathParts.length + 1}, got ${itemPathParts.length} -> FILTER OUT`);
           return false;
         }
 
         // Must start with the same path parts as target
         for (let i = 0; i < targetPathParts.length; i++) {
           if (itemPathParts[i] !== targetPathParts[i]) {
-            console.log(`[DEBUG] Path mismatch at position ${i}: expected ${targetPathParts[i]}, got ${itemPathParts[i]} -> FILTER OUT`);
+            log.debug(`Path mismatch at position ${i}: expected ${targetPathParts[i]}, got ${itemPathParts[i]} -> FILTER OUT`);
             return false;
           }
         }
 
-        console.log(`[DEBUG] Subdir filter passed for: ${item.fullPath} -> KEEP`);
+        log.debug(`Subdir filter passed for: ${item.fullPath} -> KEEP`);
         return true;
       }
     });
@@ -760,52 +760,52 @@ function parseTreeForPath(treeOutput: string, targetPath: string): { name: strin
       isDir: item.isDir
     }));
 
-    console.log(`[DEBUG] parseTreeForPath: Found ${targetItems.length} items for ${targetPath}:`, targetItems.map(i => `${i.fullPath} (depth: ${i.depth})`));
-    console.log(`[DEBUG] parseTreeForPath: Returning ${result.length} entries:`, result.map(r => `${r.name} (${r.isDir ? 'dir' : 'file'})`));
+    log.debug(`parseTreeForPath: Found ${targetItems.length} items for ${targetPath}:`, targetItems.map(i => `${i.fullPath} (depth: ${i.depth})`));
+    log.debug(`parseTreeForPath: Returning ${result.length} entries:`, result.map(r => `${r.name} (${r.isDir ? 'dir' : 'file'})`));
     return result;
   } catch (error) {
-    console.error(`[DEBUG] parseTreeForPath: Error parsing tree:`, error);
+    log.error(`parseTreeForPath: Error parsing tree:`, error);
     return [];
   }
 }
 
 export async function lsTyped(p: string): Promise<{ name: string; isDir: boolean }[]> {
   const connect = normalizeConnect(vscode.workspace.getConfiguration().get<string>("mpyWorkbench.connect", "auto") || "auto");
-  console.log(`[DEBUG] lsTyped: Getting entries for path ${p}`);
+  log.debug(`lsTyped: Getting entries for path ${p}`);
 
   try {
     // Check if cache needs to be populated or refreshed
     if (!isCacheValid()) {
-      console.log(`[DEBUG] lsTyped: Cache invalid, populating...`);
+      log.debug(`lsTyped: Cache invalid, populating...`);
       await populateFileTreeCache();
     } else {
-      console.log(`[DEBUG] lsTyped: Using cached tree data`);
+      log.debug(`lsTyped: Using cached tree data`);
     }
 
     // Try to get entries from cache first
     const cachedResult = getEntriesFromCache(p);
     if (cachedResult && cachedResult.length > 0) {
-      console.log(`[DEBUG] lsTyped: Found ${cachedResult.length} entries in cache for ${p}`);
+      log.debug(`lsTyped: Found ${cachedResult.length} entries in cache for ${p}`);
       return cachedResult;
     }
 
-    console.log(`[DEBUG] lsTyped: No cached results for ${p}, trying direct tree parsing`);
+    log.debug(`lsTyped: No cached results for ${p}, trying direct tree parsing`);
 
     // Fallback: direct tree parsing for this specific path
     const { stdout } = await runMpremote(["connect", connect, "fs", "tree"], { retryOnFailure: true });
     const result = parseTreeForPath(String(stdout || ""), p);
 
-    console.log(`[DEBUG] lsTyped: Direct parsing found ${result.length} entries for ${p}`);
+    log.debug(`lsTyped: Direct parsing found ${result.length} entries for ${p}`);
 
     // If still no results, try fs ls as last resort
     if (result.length === 0) {
-      console.log(`[DEBUG] lsTyped: No results from tree parsing, trying fs ls fallback`);
+      log.debug(`lsTyped: No results from tree parsing, trying fs ls fallback`);
       try {
         const pathArg = p && p !== "/" ? p : "";
         const args = ["connect", connect, "fs", "ls"].concat(pathArg ? [pathArg] : []);
 
         const { stdout: lsOutput } = await runMpremote(args, { retryOnFailure: true });
-        console.log(`[DEBUG] lsTyped: Fallback ls output:\n${lsOutput}`);
+        log.debug(`lsTyped: Fallback ls output:\n${lsOutput}`);
 
         // Parse ls output as fallback
         const lines = String(lsOutput || "").split(/\r?\n/).filter(line => line.trim());
@@ -832,16 +832,16 @@ export async function lsTyped(p: string): Promise<{ name: string; isDir: boolean
           }
         }
 
-        console.log(`[DEBUG] lsTyped: Fallback parsed ${fallbackResult.length} entries:`, fallbackResult);
+        log.debug(`lsTyped: Fallback parsed ${fallbackResult.length} entries:`, fallbackResult);
         return fallbackResult;
       } catch (fallbackError) {
-        console.error(`[DEBUG] lsTyped: Fallback also failed:`, fallbackError);
+        log.error(`lsTyped: Fallback also failed:`, fallbackError);
       }
     }
 
     return result;
   } catch (error) {
-    console.error(`[DEBUG] lsTyped: Error for path ${p}: ${error}`);
+    log.error(`lsTyped: Error for path ${p}: ${error}`);
     throw error;
   }
 }
@@ -914,8 +914,8 @@ export async function cpFromDevice(devicePath: string, localPath: string): Promi
     const commandArgs = ["connect", connect, "fs", "cp", devicePathWithPrefix, localPath];
     const command = `mpremote ${commandArgs.map(arg => `"${arg}"`).join(' ')}`;
 
-    console.log(`[DEBUG] cpFromDevice: Executing command: ${command}`);
-    console.log(`[DEBUG] cpFromDevice: Device path: ${devicePath} -> ${deviceArg} -> ${devicePathWithPrefix}`);
+    log.debug(`cpFromDevice: Executing command: ${command}`);
+    log.debug(`cpFromDevice: Device path: ${devicePath} -> ${deviceArg} -> ${devicePathWithPrefix}`);
     await runMpremote(commandArgs, { retryOnFailure: true });
 
     // Note: We don't clear cache here since we're only reading, not modifying
@@ -942,19 +942,19 @@ export async function cpToDevice(localPath: string, devicePath: string): Promise
     const parentDir = deviceArg.substring(0, deviceArg.lastIndexOf('/'));
     
     if (parentDir && parentDir !== "" && parentDir !== "/") {
-      console.log(`[DEBUG] cpToDevice: Creating parent directory: ${parentDir}`);
+      log.debug(`cpToDevice: Creating parent directory: ${parentDir}`);
       try {
         // Create parent directory with -p flag (recursive, like mkdir -p)
         await runMpremote(["connect", connect, "fs", "mkdir", "-p", parentDir], { retryOnFailure: true });
-        console.log(`[DEBUG] cpToDevice: ✓ Parent directory created: ${parentDir}`);
+        log.debug(`cpToDevice: ✓ Parent directory created: ${parentDir}`);
       } catch (mkdirError: any) {
         // Directory might already exist, which is fine
         const errorStr = String(mkdirError?.message || mkdirError).toLowerCase();
         if (!errorStr.includes("file exists") && !errorStr.includes("directory exists")) {
-          console.warn(`[DEBUG] cpToDevice: ⚠ Failed to create parent directory ${parentDir}:`, mkdirError);
+          log.warn(`cpToDevice: ⚠ Failed to create parent directory ${parentDir}:`, mkdirError);
           // Continue anyway - the directory might already exist
         } else {
-          console.log(`[DEBUG] cpToDevice: ✓ Parent directory already exists: ${parentDir}`);
+          log.debug(`cpToDevice: ✓ Parent directory already exists: ${parentDir}`);
         }
       }
     }
@@ -964,14 +964,14 @@ export async function cpToDevice(localPath: string, devicePath: string): Promise
     const commandArgs = ["connect", connect, "fs", "cp", localPath, devicePathWithPrefix];
     const command = `mpremote ${commandArgs.map(arg => `"${arg}"`).join(' ')}`;
 
-    console.log(`[DEBUG] cpToDevice: Executing command: ${command}`);
-    console.log(`[DEBUG] cpToDevice: Device path: ${devicePath} -> ${deviceArg} -> ${devicePathWithPrefix}`);
+    log.debug(`cpToDevice: Executing command: ${command}`);
+    log.debug(`cpToDevice: Device path: ${devicePath} -> ${deviceArg} -> ${devicePathWithPrefix}`);
     await runMpremote(commandArgs, { retryOnFailure: true });
 
     // Invalidate cache since filesystem changed
     clearFileTreeCache();
   } catch (error: any) {
-    console.error(`[DEBUG] cpToDevice: Upload failed:`, error);
+    log.error(`cpToDevice: Upload failed:`, error);
 
     // Mark connection as unhealthy
     connectionManager.markUnhealthy(connect);
@@ -981,7 +981,7 @@ export async function cpToDevice(localPath: string, devicePath: string): Promise
 
     // Check if it's a "No such file or directory" error (missing parent directory)
     if (errorStr.includes("no such file or directory") || errorStr.includes("file not found")) {
-      console.log(`[DEBUG] cpToDevice: Directory missing error detected. Attempting to create parent directories...`);
+      log.debug(`cpToDevice: Directory missing error detected. Attempting to create parent directories...`);
       
       const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
       const pathParts = deviceArg.split('/').filter(part => part.length > 0);
@@ -990,92 +990,92 @@ export async function cpToDevice(localPath: string, devicePath: string): Promise
       for (let i = 1; i < pathParts.length; i++) {
         const partialPath = '/' + pathParts.slice(0, i).join('/');
         try {
-          console.log(`[DEBUG] cpToDevice: Creating directory level: ${partialPath}`);
+          log.debug(`cpToDevice: Creating directory level: ${partialPath}`);
           await runMpremote(["connect", connect, "fs", "mkdir", partialPath], { retryOnFailure: false });
         } catch (mkdirErr: any) {
           const mkdirErrStr = String(mkdirErr?.message || mkdirErr).toLowerCase();
           if (!mkdirErrStr.includes("file exists") && !mkdirErrStr.includes("directory exists")) {
-            console.warn(`[DEBUG] cpToDevice: Could not create ${partialPath}:`, mkdirErr);
+            log.warn(`cpToDevice: Could not create ${partialPath}:`, mkdirErr);
           }
         }
       }
       
       // Retry the original copy operation
       try {
-        console.log(`[DEBUG] cpToDevice: Retrying copy after creating directories...`);
+        log.debug(`cpToDevice: Retrying copy after creating directories...`);
         const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
         await runMpremote(["connect", connect, "fs", "cp", localPath, devicePathWithPrefix], { retryOnFailure: false });
-        console.log(`[DEBUG] cpToDevice: ✓ Copy succeeded after creating directories!`);
+        log.debug(`cpToDevice: ✓ Copy succeeded after creating directories!`);
         clearFileTreeCache();
         return; // Success!
       } catch (retryError: any) {
-        console.error(`[DEBUG] cpToDevice: Retry also failed:`, retryError);
+        log.error(`cpToDevice: Retry also failed:`, retryError);
         // Continue to other error handling below
       }
     }
 
     // Check if it's a read-only file system error
     if (errorStr.includes("read-only file system")) {
-      console.log(`[DEBUG] cpToDevice: Read-only file system detected. Attempting recovery...`);
+      log.debug(`cpToDevice: Read-only file system detected. Attempting recovery...`);
 
       // Try to get filesystem information
       try {
         const { stdout: statOutput } = await runMpremote(["connect", connect, "fs", "stat", "/"], { retryOnFailure: false });
-        console.log(`[DEBUG] cpToDevice: Root filesystem stat:`, statOutput);
+        log.debug(`cpToDevice: Root filesystem stat:`, statOutput);
       } catch (statError) {
-        console.error(`[DEBUG] cpToDevice: Could not get filesystem stat:`, statError);
+        log.error(`cpToDevice: Could not get filesystem stat:`, statError);
       }
 
       // Try recovery methods
-      console.log(`[DEBUG] cpToDevice: Attempting recovery methods...`);
+      log.debug(`cpToDevice: Attempting recovery methods...`);
 
       // Method 1: Try soft reset
       try {
-        console.log(`[DEBUG] cpToDevice: Attempting soft reset...`);
+        log.debug(`cpToDevice: Attempting soft reset...`);
         await runMpremote(["connect", connect, "reset"], { retryOnFailure: false });
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for reset
-        console.log(`[DEBUG] cpToDevice: Soft reset completed`);
+        log.debug(`cpToDevice: Soft reset completed`);
 
         // Try the upload again after reset
-        console.log(`[DEBUG] cpToDevice: Retrying upload after reset...`);
+        log.debug(`cpToDevice: Retrying upload after reset...`);
         const deviceArgRetry = devicePath && devicePath !== "/" ? devicePath : "/";
         const devicePathWithPrefixRetry = deviceArgRetry === "/" ? ":" : `:${deviceArgRetry}`;
         await runMpremote(["connect", connect, "fs", "cp", localPath, devicePathWithPrefixRetry], { retryOnFailure: false });
-        console.log(`[DEBUG] cpToDevice: Upload succeeded after reset!`);
+        log.debug(`cpToDevice: Upload succeeded after reset!`);
 
         // Invalidate cache since filesystem changed
         clearFileTreeCache();
         return; // Success, don't throw error
       } catch (resetError) {
-        console.error(`[DEBUG] cpToDevice: Reset recovery failed:`, resetError);
+        log.error(`cpToDevice: Reset recovery failed:`, resetError);
       }
 
       // Method 2: Try to remount filesystem (if supported)
       try {
-        console.log(`[DEBUG] cpToDevice: Attempting filesystem remount...`);
+        log.debug(`cpToDevice: Attempting filesystem remount...`);
         await runMpremote(["connect", connect, "exec", "import os; os.umount('/'); os.mount(os.VfsFat(os.sdcard()), '/')"], { retryOnFailure: false });
-        console.log(`[DEBUG] cpToDevice: Filesystem remount attempted`);
+        log.debug(`cpToDevice: Filesystem remount attempted`);
 
         // Try upload again
         const deviceArgRemount = devicePath && devicePath !== "/" ? devicePath : "/";
         const devicePathWithPrefixRemount = deviceArgRemount === "/" ? ":" : `:${deviceArgRemount}`;
         await runMpremote(["connect", connect, "fs", "cp", localPath, devicePathWithPrefixRemount], { retryOnFailure: false });
-        console.log(`[DEBUG] cpToDevice: Upload succeeded after remount!`);
+        log.debug(`cpToDevice: Upload succeeded after remount!`);
 
         // Invalidate cache since filesystem changed
         clearFileTreeCache();
         return; // Success, don't throw error
       } catch (remountError) {
-        console.error(`[DEBUG] cpToDevice: Remount recovery failed:`, remountError);
+        log.error(`cpToDevice: Remount recovery failed:`, remountError);
       }
 
       // Method 3: Check if we can write to a test file
       try {
-        console.log(`[DEBUG] cpToDevice: Testing write permissions...`);
+        log.debug(`cpToDevice: Testing write permissions...`);
         await runMpremote(["connect", connect, "exec", "f = open('test_write.tmp', 'w'); f.write('test'); f.close()"], { retryOnFailure: false });
-        console.log(`[DEBUG] cpToDevice: Write test succeeded - filesystem is writable`);
+        log.debug(`cpToDevice: Write test succeeded - filesystem is writable`);
       } catch (testError) {
-        console.error(`[DEBUG] cpToDevice: Write test failed:`, testError);
+        log.error(`cpToDevice: Write test failed:`, testError);
       }
     }
 
@@ -1097,19 +1097,19 @@ export async function uploadReplacing(localPath: string, devicePath: string): Pr
     const parentDir = deviceArg.substring(0, deviceArg.lastIndexOf('/'));
     
     if (parentDir && parentDir !== "" && parentDir !== "/") {
-      console.log(`[DEBUG] uploadReplacing: Creating parent directory: ${parentDir}`);
+      log.debug(`uploadReplacing: Creating parent directory: ${parentDir}`);
       try {
         // Create parent directory with -p flag (recursive, like mkdir -p)
         await runMpremote(["connect", connect, "fs", "mkdir", "-p", parentDir], { retryOnFailure: true });
-        console.log(`[DEBUG] uploadReplacing: ✓ Parent directory created: ${parentDir}`);
+        log.debug(`uploadReplacing: ✓ Parent directory created: ${parentDir}`);
       } catch (mkdirError: any) {
         // Directory might already exist, which is fine
         const errorStr = String(mkdirError?.message || mkdirError).toLowerCase();
         if (!errorStr.includes("file exists") && !errorStr.includes("directory exists")) {
-          console.warn(`[DEBUG] uploadReplacing: ⚠ Failed to create parent directory ${parentDir}:`, mkdirError);
+          log.warn(`uploadReplacing: ⚠ Failed to create parent directory ${parentDir}:`, mkdirError);
           // Continue anyway - the directory might already exist
         } else {
-          console.log(`[DEBUG] uploadReplacing: ✓ Parent directory already exists: ${parentDir}`);
+          log.debug(`uploadReplacing: ✓ Parent directory already exists: ${parentDir}`);
         }
       }
     }
@@ -1121,7 +1121,7 @@ export async function uploadReplacing(localPath: string, devicePath: string): Pr
     // Invalidate cache since filesystem changed
     clearFileTreeCache();
   } catch (error: any) {
-    console.error(`[DEBUG] uploadReplacing: Upload failed:`, error);
+    log.error(`uploadReplacing: Upload failed:`, error);
 
     // Mark connection as unhealthy
     connectionManager.markUnhealthy(connect);
@@ -1131,7 +1131,7 @@ export async function uploadReplacing(localPath: string, devicePath: string): Pr
 
     // Check if it's a "No such file or directory" error (missing parent directory)
     if (errorStr.includes("no such file or directory") || errorStr.includes("file not found")) {
-      console.log(`[DEBUG] uploadReplacing: Directory missing error detected. Attempting to create parent directories...`);
+      log.debug(`uploadReplacing: Directory missing error detected. Attempting to create parent directories...`);
       
       const deviceArg = devicePath && devicePath !== "/" ? devicePath : "/";
       const pathParts = deviceArg.split('/').filter(part => part.length > 0);
@@ -1140,26 +1140,26 @@ export async function uploadReplacing(localPath: string, devicePath: string): Pr
       for (let i = 1; i < pathParts.length; i++) {
         const partialPath = '/' + pathParts.slice(0, i).join('/');
         try {
-          console.log(`[DEBUG] uploadReplacing: Creating directory level: ${partialPath}`);
+          log.debug(`uploadReplacing: Creating directory level: ${partialPath}`);
           await runMpremote(["connect", connect, "fs", "mkdir", partialPath], { retryOnFailure: false });
         } catch (mkdirErr: any) {
           const mkdirErrStr = String(mkdirErr?.message || mkdirErr).toLowerCase();
           if (!mkdirErrStr.includes("file exists") && !mkdirErrStr.includes("directory exists")) {
-            console.warn(`[DEBUG] uploadReplacing: Could not create ${partialPath}:`, mkdirErr);
+            log.warn(`uploadReplacing: Could not create ${partialPath}:`, mkdirErr);
           }
         }
       }
       
       // Retry the original upload operation
       try {
-        console.log(`[DEBUG] uploadReplacing: Retrying upload after creating directories...`);
+        log.debug(`uploadReplacing: Retrying upload after creating directories...`);
         const devicePathWithPrefix = deviceArg === "/" ? ":" : `:${deviceArg}`;
         await runMpremote(["connect", connect, "fs", "cp", "-f", localPath, devicePathWithPrefix], { retryOnFailure: false });
-        console.log(`[DEBUG] uploadReplacing: ✓ Upload succeeded after creating directories!`);
+        log.debug(`uploadReplacing: ✓ Upload succeeded after creating directories!`);
         clearFileTreeCache();
         return; // Success!
       } catch (retryError: any) {
-        console.error(`[DEBUG] uploadReplacing: Retry also failed:`, retryError);
+        log.error(`uploadReplacing: Retry also failed:`, retryError);
         // Continue to throw original error
       }
     }
@@ -1177,14 +1177,14 @@ export async function deleteFile(p: string): Promise<void> {
 }
 
 export async function deleteDirectoryRecursive(p: string, connect: string): Promise<void> {
-  console.log(`[DEBUG] deleteDirectoryRecursive: Starting recursive delete for ${p}`);
+  log.debug(`deleteDirectoryRecursive: Starting recursive delete for ${p}`);
 
   try {
     // First, list all contents of the directory
     const { stdout } = await runMpremote(["connect", connect, "fs", "ls", p], { retryOnFailure: true });
     const lines = String(stdout || "").split(/\r?\n/).filter(line => line.trim());
 
-    console.log(`[DEBUG] deleteDirectoryRecursive: Found ${lines.length} items in ${p}`);
+    log.debug(`deleteDirectoryRecursive: Found ${lines.length} items in ${p}`);
 
     // Delete each item in the directory
     for (const line of lines) {
@@ -1198,7 +1198,7 @@ export async function deleteDirectoryRecursive(p: string, connect: string): Prom
 
         const itemPath = p === "/" ? `/${filename.replace(/\/$/, '')}` : `${p}/${filename.replace(/\/$/, '')}`;
 
-        console.log(`[DEBUG] deleteDirectoryRecursive: Processing ${itemPath} (${isDir ? 'dir' : 'file'})`);
+        log.debug(`deleteDirectoryRecursive: Processing ${itemPath} (${isDir ? 'dir' : 'file'})`);
 
         if (isDir) {
           // Recursively delete subdirectory
@@ -1207,9 +1207,9 @@ export async function deleteDirectoryRecursive(p: string, connect: string): Prom
           // Delete file
           try {
             await runMpremote(["connect", connect, "fs", "rm", itemPath], { retryOnFailure: true });
-            console.log(`[DEBUG] deleteDirectoryRecursive: Deleted file ${itemPath}`);
+            log.debug(`deleteDirectoryRecursive: Deleted file ${itemPath}`);
           } catch (fileError: any) {
-            console.warn(`[DEBUG] deleteDirectoryRecursive: Failed to delete file ${itemPath}:`, fileError);
+            log.warn(`deleteDirectoryRecursive: Failed to delete file ${itemPath}:`, fileError);
             // Continue with other files even if one fails
           }
         }
@@ -1217,12 +1217,12 @@ export async function deleteDirectoryRecursive(p: string, connect: string): Prom
     }
 
     // Finally, delete the now-empty directory
-    console.log(`[DEBUG] deleteDirectoryRecursive: Deleting empty directory ${p}`);
+    log.debug(`deleteDirectoryRecursive: Deleting empty directory ${p}`);
     await runMpremote(["connect", connect, "fs", "rmdir", p], { retryOnFailure: true });
-    console.log(`[DEBUG] deleteDirectoryRecursive: Successfully deleted directory ${p}`);
+    log.debug(`deleteDirectoryRecursive: Successfully deleted directory ${p}`);
 
   } catch (error: any) {
-    console.error(`[DEBUG] deleteDirectoryRecursive: Failed to delete directory ${p}:`, error);
+    log.error(`deleteDirectoryRecursive: Failed to delete directory ${p}:`, error);
     throw error;
   }
 }
@@ -1258,18 +1258,18 @@ export async function deleteAny(p: string): Promise<void> {
 
     // Check if it's OSError: 39 (Directory not empty)
     if (errorMessage.includes("oserror: 39") || errorMessage.includes("directory not empty")) {
-      console.log(`[DEBUG] deleteAny: Directory not empty, attempting recursive delete for ${p}`);
+      log.debug(`deleteAny: Directory not empty, attempting recursive delete for ${p}`);
 
       try {
         // Fallback: Use manual recursive deletion for non-empty directories
         await deleteDirectoryRecursive(p, connect);
-        console.log(`[DEBUG] deleteAny: Successfully deleted directory recursively: ${p}`);
+        log.debug(`deleteAny: Successfully deleted directory recursively: ${p}`);
 
         // Invalidate cache since filesystem changed
         clearFileTreeCache();
         return;
       } catch (recursiveError: any) {
-        console.error(`[DEBUG] deleteAny: Recursive delete also failed for ${p}:`, recursiveError);
+        log.error(`deleteAny: Recursive delete also failed for ${p}:`, recursiveError);
         connectionManager.markUnhealthy(connect);
         throw new Error(`Failed to delete directory ${p}: ${recursiveError?.message || recursiveError}`);
       }
@@ -1305,7 +1305,7 @@ export async function fileExists(p: string): Promise<boolean> {
     if (errorStr.includes("serialexception") ||
         errorStr.includes("device not configured") ||
         errorStr.includes("connection failed")) {
-      console.warn(`Serial connection error during file check: ${errorStr}`);
+      log.warn(`Serial connection error during file check: ${errorStr}`);
       return false;
     }
     // For other errors, assume file doesn't exist
@@ -1343,7 +1343,7 @@ export async function fileExistsSha256(p: string): Promise<boolean> {
     if (errorStr.includes("serialexception") ||
         errorStr.includes("device not configured") ||
         errorStr.includes("connection failed")) {
-      console.warn(`Serial connection error during sha256sum file check: ${errorStr}`);
+      log.warn(`Serial connection error during sha256sum file check: ${errorStr}`);
       return false;
     }
     // For other errors, assume file doesn't exist
@@ -1412,14 +1412,14 @@ export async function deleteAllInPath(rootPath: string): Promise<{deleted: strin
       // Delete each root-level item individually (sequentially to avoid concurrent access)
       for (const item of rootItems) {
         try {
-          console.log(`[DEBUG] deleteAllInPath: Deleting ${item.path}...`);
+          log.debug(`deleteAllInPath: Deleting ${item.path}...`);
           await runMpremote(["connect", connect, "fs", "rm", "-r", item.path], { retryOnFailure: true });
           deleted.push(item.path);
-          console.log(`[DEBUG] deleteAllInPath: Successfully deleted ${item.path}`);
+          log.debug(`deleteAllInPath: Successfully deleted ${item.path}`);
         } catch (error: any) {
           errors.push(`Failed to delete ${item.path}: ${error?.message || error}`);
           connectionManager.markUnhealthy(connect);
-          console.error(`[DEBUG] deleteAllInPath: Failed to delete ${item.path}:`, error);
+          log.error(`deleteAllInPath: Failed to delete ${item.path}:`, error);
         }
       }
     } else {
@@ -1471,7 +1471,7 @@ export async function reset(): Promise<void> {
   } catch (error: any) {
     // Reset is not critical, so we don't throw errors
     // Just log the issue for debugging
-    console.warn(`Reset command failed: ${error?.message || error}`);
+    log.warn(`Reset command failed: ${error?.message || error}`);
   }
 }
 
@@ -1495,7 +1495,7 @@ export async function listTreeStats(root: string): Promise<Array<{ path: string;
         const fileAge = now - stats.mtime.getTime();
 
         if (fileAge < 30000) { // 30 seconds
-          console.log(`[DEBUG] listTreeStats: Using cached tree-paths.json (age: ${fileAge}ms)`);
+          log.debug(`listTreeStats: Using cached tree-paths.json (age: ${fileAge}ms)`);
 
           // Read and parse the cached file
           const cachedData = JSON.parse(fs.readFileSync(treePathsFile, 'utf8'));
@@ -1514,18 +1514,18 @@ export async function listTreeStats(root: string): Promise<Array<{ path: string;
             });
           }
 
-          console.log(`[DEBUG] listTreeStats: Loaded ${result.length} items from cache`);
+          log.debug(`listTreeStats: Loaded ${result.length} items from cache`);
           return result;
         } else {
-          console.log(`[DEBUG] listTreeStats: Cached file too old (${fileAge}ms), refreshing...`);
+          log.debug(`listTreeStats: Cached file too old (${fileAge}ms), refreshing...`);
         }
       } catch (cacheError) {
-        console.log(`[DEBUG] listTreeStats: Could not read cached file:`, cacheError);
+        log.debug(`listTreeStats: Could not read cached file:`, cacheError);
       }
     }
 
     // Fallback to original method if cache is not available or too old
-    console.log(`[DEBUG] listTreeStats: Using original mpremote fs tree method`);
+    log.debug(`listTreeStats: Using original mpremote fs tree method`);
 
     // Use mpremote fs tree command to get hierarchical file listing
     const rootArg = root && root !== "/" ? root : "";
@@ -1704,7 +1704,7 @@ export async function getBoardFilesAndSizes(rootPath: string = "/"): Promise<{
 
     return { files, directories };
   } catch (error) {
-    console.error(`[DEBUG] getBoardFilesAndSizes: Failed to get file data:`, error);
+    log.error(`getBoardFilesAndSizes: Failed to get file data:`, error);
     throw error;
   }
 }

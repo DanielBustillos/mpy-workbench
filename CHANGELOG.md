@@ -1,5 +1,37 @@
 # Cambios
 
+## [0.3.4] - 2026-11-04
+### Añadido
+- **Sincronizar solo una subcarpeta (#7)**: nuevo ajuste `mpyWorkbench.localRoot` (p. ej. `device`). Solo esa carpeta se refleja en la placa; `.mpyignore` se aplica relativo a ella.
+- **Auto-stop opcional (#5, #17, #26)**: con `mpyWorkbench.autoStopBeforeBoardAction` activado, el programa lanzado con "Run file" se detiene (Ctrl-C) antes de subir archivos, auto-sync al guardar, Run file, Stop y Soft reset, para liberar el puerto. Desactivado por defecto. Basado en la propuesta del PR #31.
+- **Atajos estilo Thonny (#17)**: `F5` ejecuta el archivo activo en la placa y `Ctrl+F2` / `Cmd+F2` lo detiene. Solo con un puerto seleccionado y fuera del depurador; se desactivan con `mpyWorkbench.thonnyShortcuts`.
+
+### Corregido
+- **Symlinks (#34)**: "Upload all" y subir carpeta ahora siguen enlaces simbólicos (archivos y carpetas, sin bucles). "Download all" omite archivos que localmente son enlaces para no sobrescribir el original.
+- **Upload Active File**: en Windows no convertía `\` a `/` e ignoraba `mpyWorkbench.rootPath`.
+
+## [0.3.3] - 2026-11-04
+### Seguridad
+- **Inyección de comandos corregida**: Stop/Interrupt/Soft reset ejecutaban `echo -e ... > <puerto>` en un shell con el puerto sin escapar. Ahora se escribe directo al dispositivo serie (solo dispositivos de carácter) y todas las llamadas a mpremote usan `execFile` con lista de argumentos, sin shell.
+- **Restricted Mode**: `mpyWorkbench.pythonPath`, `mpyWorkbench.connect` y `mpyWorkbench.rootPath` ya no se leen del workspace si no es de confianza (`restrictedConfigurations`). Igual para `python.defaultInterpreterPath`.
+
+### Corregido
+- **Windows**: los comandos usaban comillas POSIX, que cmd.exe y PowerShell no entienden. "Run file" ahora cita según el shell de la terminal (`&` en PowerShell) y el REPL lanza Python directamente, sin shell.
+- **Menú contextual de Files**: Delete, Delete (board + local), Rename, New File, New Folder, Open local, Sync file ↔ board volvían a dar "command not found" (se habían desregistrado por error en 0.3.2).
+- **Vista Local Files**: estaba implementada pero no declarada en `package.json`; ahora aparece con sus acciones (Upload to Board, Rename, Delete, etc.).
+- **Bloqueo por puerto**: `markHealthy()` liberaba el bloqueo justo después de tomarlo, así que dos operaciones podían abrir el mismo puerto a la vez. Además, la espera ahora tiene un límite de 120 s en lugar de esperar para siempre.
+- **Validación de mpremote**: se comprobaba un ejecutable `mpremote` en el PATH en lugar de `python -m mpremote`.
+- **Instalación de mpremote**: usa `execFile` y reporta correctamente los fallos de pip.
+- **Listado por raw REPL** (`usePyRawList`): apuntaba a un script inexistente (`thonny_list_files.py`); la ruta ahora se escapa con `repr()`.
+- **REPL tras operaciones de archivos**: la terminal se recrea en lugar de enviar texto a un proceso terminado.
+
+### Cambiado
+- Logs en el canal de salida "MPY Workbench" (`MPY Workbench: Show Log`); los mensajes de depuración requieren `mpyWorkbench.debugLogging`.
+- Mensajes de la UI unificados en inglés.
+- Eliminado código sin uso: `boardOperations.ts`, `test.ts`, `mpremoteOperations.ts`, `monitor.ts`, `control.ts`, `miniterm_filter.py`, `scripts/check_python_deps.py`, `scripts/bench_upload.py`.
+- `node_modules/`, `dist/` y el `.vsix` ya no se versionan; `vscode:prepublish` compila antes de empaquetar.
+- Añadido `npm test` con tests unitarios del citado de comandos para terminal.
+
 ## [0.2.62] - 2026-02-08
 ### Mejorado
 - **Usabilidad de errores al ejecutar (issue #14)**: Al usar "Run file", la extensión comprueba si el archivo existe en el board. Si existe, ejecuta con `mpremote exec "import <módulo>"` en lugar de `run`, de modo que los tracebacks muestran la ruta real del archivo (p. ej. `File "carpeta/archivo.py", line X`) y se puede hacer Ctrl+clic en VSCode para ir al código. Si el archivo no está en el board, se sigue usando `run` como antes.
