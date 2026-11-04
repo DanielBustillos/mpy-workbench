@@ -1,6 +1,6 @@
 # Cambios
 
-## [Unreleased]
+## [0.3.3] - 2026-11-04
 ### Seguridad
 - **Inyección de comandos corregida**: Stop/Interrupt/Soft reset ejecutaban `echo -e ... > <puerto>` en un shell con el puerto sin escapar. Ahora se escribe directo al dispositivo serie (solo dispositivos de carácter) y todas las llamadas a mpremote usan `execFile` con lista de argumentos, sin shell.
 - **Restricted Mode**: `mpyWorkbench.pythonPath`, `mpyWorkbench.connect` y `mpyWorkbench.rootPath` ya no se leen del workspace si no es de confianza (`restrictedConfigurations`). Igual para `python.defaultInterpreterPath`.
