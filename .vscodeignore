@@ -1,20 +1,21 @@
-# Fuentes y configs que no necesita el usuario
+# Sources and configs the user does not need
 src/**
 tsconfig.json
 .vscode/**
 .git/**
 .github/**
+.gitignore
+.gitattributes
 .vscodeignore
-.vscodelocal/**
 node_modules/**
 .mpyignore
-.cursor
-.mpy-workbench
+.cursor/**
+.mpy-workbench/**
+*.vsix
 
-# Mantén solo lo necesario
-!dist/**
-!media/**
-!scripts/**
-!readme.md
-!changelog.md
-!license*
+# Unit tests and source maps
+dist/test/**
+dist/**/*.map
+
+# README GIFs are loaded from GitHub, no need to ship them
+assets/**

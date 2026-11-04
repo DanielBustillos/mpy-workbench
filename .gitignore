@@ -1,6 +1,17 @@
+# OS / editor
 .DS_Store
-*.py
-.mpyignore
 .cursor
+
+# Dependencies and build output
+node_modules/
+dist/
+*.vsix
+
+# Extension workspace data (created when using the extension on this repo)
+.mpyignore
 .mpy-workbench
 .mpy-workbench-*
+
+# Python
+__pycache__/
+*.pyc
