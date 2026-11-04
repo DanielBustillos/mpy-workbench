@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { log } from './logger';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,7 +47,7 @@ export class PythonInterpreterManager {
                 // Python path invalid (e.g. not found); fall through to other methods
             }
         } catch (error) {
-            console.log('Failed to use mpyWorkbench.pythonPath:', error);
+            log.warn('Failed to use mpyWorkbench.pythonPath:', error);
         }
 
         try {
@@ -63,7 +64,7 @@ export class PythonInterpreterManager {
                 }
             }
         } catch (error) {
-            console.log('Failed to get Python from extension API:', error);
+            log.debug('Failed to get Python from extension API:', error);
         }
 
         try {
@@ -80,7 +81,7 @@ export class PythonInterpreterManager {
                 }
             }
         } catch (error) {
-            console.log('Failed to get Python from configuration:', error);
+            log.debug('Failed to get Python from configuration:', error);
         }
 
         // Method 3: Try fallback options
@@ -147,7 +148,7 @@ export class PythonInterpreterManager {
 
             return null;
         } catch (error) {
-            console.log('Error accessing Python extension API:', error);
+            log.debug('Error accessing Python extension API:', error);
             return null;
         }
     }
@@ -184,7 +185,16 @@ export class PythonInterpreterManager {
         ];
 
         for (const key of configKeys) {
-            const pythonPath = config.get<string>(key);
+            // In an untrusted workspace, ignore values coming from the workspace
+            // (.vscode/settings.json): they would let a cloned repo choose which
+            // executable this extension runs.
+            let pythonPath: string | undefined;
+            if (vscode.workspace.isTrusted) {
+                pythonPath = config.get<string>(key);
+            } else {
+                const info = config.inspect<string>(key);
+                pythonPath = info?.globalValue ?? info?.defaultValue;
+            }
             if (pythonPath && pythonPath.trim()) {
                 return pythonPath.trim();
             }
@@ -203,8 +213,7 @@ export class PythonInterpreterManager {
             return [
                 'python',
                 'python3',
-                'py -3',
-                'py',
+                'py', // Python launcher; defaults to the newest Python 3
                 path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python39', 'python.exe'),
                 path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python310', 'python.exe'),
                 path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe'),
@@ -229,21 +238,21 @@ export class PythonInterpreterManager {
     private static async validatePythonPath(pythonPath: string): Promise<{ valid: boolean; missingMpremote: boolean; error?: string }> {
         try {
             // Test if Python executable exists and can run
-            const { stdout } = await execFileAsync(pythonPath, ['-c', 'import sys; print(sys.version)'], { timeout: 5000 });
+            await execFileAsync(pythonPath, ['-c', 'import sys; print(sys.version)'], { timeout: 5000 });
+        } catch (error: any) {
+            return { valid: false, missingMpremote: false, error: error?.message || String(error) };
+        }
 
-            // Check if mpremote command is available
-            await execFileAsync('mpremote', ['--version'], { timeout: 5000 });
-
+        try {
+            // The extension always runs `<python> -m mpremote`, so check exactly that
+            // (not an `mpremote` executable on PATH, which may belong to another Python).
+            await execFileAsync(pythonPath, ['-m', 'mpremote', '--version'], { timeout: 10000 });
             return { valid: true, missingMpremote: false };
         } catch (error: any) {
-            const errorMessage = error.message || String(error);
-
-            // Check if it's specifically an mpremote availability error
-            if (errorMessage.includes('mpremote') && (errorMessage.includes('not found') || errorMessage.includes('command not found'))) {
+            const errorMessage = `${error?.stderr || ''} ${error?.message || String(error)}`;
+            if (/No module named ['"]?mpremote/i.test(errorMessage)) {
                 return { valid: false, missingMpremote: true, error: errorMessage };
             }
-
-            // Other Python-related errors
             return { valid: false, missingMpremote: false, error: errorMessage };
         }
     }
@@ -259,23 +268,13 @@ export class PythonInterpreterManager {
         }
         this.lastMpremoteNotification = now;
 
-        const isWindows = process.platform === 'win32';
         const isMac = process.platform === 'darwin';
-
-        let installCommand: string;
-        let packageManager: string;
-
-        if (isWindows) {
-            installCommand = `${pythonPath} -m pip install mpremote`;
-            packageManager = 'pip';
-        } else if (isMac) {
-            installCommand = `${pythonPath} -m pip install mpremote`;
-            packageManager = 'pip (o usa Homebrew: brew install mpremote)';
-        } else {
-            // Linux
-            installCommand = `${pythonPath} -m pip install mpremote`;
-            packageManager = 'pip (o usa apt: sudo apt install python3-mpremote)';
-        }
+        const isLinux = process.platform === 'linux';
+        const pipArgs = ['-m', 'pip', 'install', 'mpremote'];
+        const installCommand = `${pythonPath} ${pipArgs.join(' ')}`;
+        const alternative = isMac
+            ? ' (or with Homebrew: brew install mpremote)'
+            : isLinux ? ' (or with apt: sudo apt install python3-mpremote)' : '';
 
         const message = `MPY Workbench requires the 'mpremote' package to communicate with your MicroPython board.`;
 
@@ -290,11 +289,10 @@ export class PythonInterpreterManager {
                     try {
                         progress.report({ increment: 0, message: 'Installing mpremote...' });
 
-                        // Run the installation command
-                        const installProcess = require('child_process').exec(installCommand);
-
-                        return new Promise<void>((resolve, reject) => {
-                            installProcess.on('close', (code: number) => {
+                        // Run pip through the interpreter with an argument array (no shell).
+                        await new Promise<void>((resolve, reject) => {
+                            const installProcess = execFile(pythonPath, pipArgs, { timeout: 300000 });
+                            installProcess.on('close', (code: number | null) => {
                                 if (code === 0) {
                                     progress.report({ increment: 100, message: 'Installation completed' });
                                     vscode.window.showInformationMessage(
@@ -323,7 +321,7 @@ export class PythonInterpreterManager {
                 const moreInfoMessage = `To install mpremote:
 
 1. Open a terminal
-2. Run: ${installCommand}
+2. Run: ${installCommand}${alternative}
 3. Restart VS Code
 
 Or visit: https://pypi.org/project/mpremote/`;
@@ -365,28 +363,9 @@ Or visit: https://pypi.org/project/mpremote/`;
 
             return validation.valid;
         } catch (error) {
-            console.log('Error checking mpremote availability:', error);
+            log.warn('Error checking mpremote availability:', error);
             return false;
         }
-    }
-
-    /**
-     * Get Python command for terminal usage (handles special cases like 'py -3')
-     */
-    static async getPythonCommandForTerminal(workspaceFolder?: vscode.WorkspaceFolder): Promise<string> {
-        const pythonPath = await this.getPythonPath(workspaceFolder);
-        
-        // If it's a complex command like 'py -3', return as-is
-        if (pythonPath.includes(' ')) {
-            return pythonPath;
-        }
-        
-        // For simple paths, quote them if they contain spaces
-        if (pythonPath.includes(' ') && !pythonPath.startsWith('"') && !pythonPath.startsWith("'")) {
-            return `"${pythonPath}"`;
-        }
-        
-        return pythonPath;
     }
 }
 
@@ -395,13 +374,6 @@ Or visit: https://pypi.org/project/mpremote/`;
  */
 export async function getPythonPath(workspaceFolder?: vscode.WorkspaceFolder): Promise<string> {
     return PythonInterpreterManager.getPythonPath(workspaceFolder);
-}
-
-/**
- * Convenience function to get Python command for terminal
- */
-export async function getPythonCommandForTerminal(workspaceFolder?: vscode.WorkspaceFolder): Promise<string> {
-    return PythonInterpreterManager.getPythonCommandForTerminal(workspaceFolder);
 }
 
 /**

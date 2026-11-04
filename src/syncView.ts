@@ -37,7 +37,7 @@ export class SyncTree implements vscode.TreeDataProvider<SyncActionNode> {
     const initialized = ws && fs.existsSync(ws.uri.fsPath + '/.mpy-workbench/esp32sync.json');
     const initLabel = initialized ? "De-initialize Workspace" : "Initialize Workspace";
 
-    // Determina el estado actual de autosync para mostrarlo en el label
+    // Current auto-sync state, shown in the label
     let autoSyncLabel = "Autosync: Off";
     try {
       if (ws) {

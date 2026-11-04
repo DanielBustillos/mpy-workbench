@@ -6,7 +6,7 @@
 ![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/DanielBucam.mpy-workbench)
 ![Installs](https://img.shields.io/visual-studio-marketplace/i/DanielBucam.mpy-workbench)
 ![Downloads](https://img.shields.io/visual-studio-marketplace/d/DanielBucam.mpy-workbench)
-![License](https://img.shields.io/github/license/DanielBustillos/mpy-studio)
+![License](https://img.shields.io/github/license/DanielBustillos/mpy-workbench)
 ![mpremote](https://img.shields.io/badge/engine-mpremote-orange)
 
 **MPY Workbench** bridges the gap between the power of VS Code and the "it just works" experience of **Thonny**. Built on top of the official **mpremote** engine, it provides a stable, high-performance workflow for professional MicroPython development without the CLI friction.
@@ -57,22 +57,22 @@ Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or
 
 The Python path used by the extension can be adjusted in the extension settings if a specific interpreter needs to be selected.
 
-## Next steps
+## Restricted Mode (untrusted workspaces)
 
-- ✅ Broaden board compatibility (currently tested only with ESP32-S3 and ESP32-C3)
-- 🔌 Add firmware flashing support for boards
-- 🪟 Perform full Windows testing: validate mpremote compatibility with COM ports and ensure consistent behavior of file operations and REPL across Windows environments  
+In an untrusted workspace, `mpyWorkbench.pythonPath`, `mpyWorkbench.connect` and `mpyWorkbench.rootPath` are read only from your user settings, never from the workspace's `.vscode/settings.json`. This prevents a cloned repository from choosing which executable or device the extension uses. Trust the workspace to use its own settings.
 
-## 🗺️ Roadmap & Current State
-Currently optimized and tested for ESP32-S3 and ESP32-C3.
-- [ ] Full Windows validation (COM port consistency).
+## Troubleshooting
+
+Logs are written to the **MPY Workbench** output channel (`MPY Workbench: Show Log`). Enable `mpyWorkbench.debugLogging` for detailed messages.
+
+## 🗺️ Roadmap
+Currently tested on ESP32-S3 and ESP32-C3.
+- [ ] Broaden board compatibility (RP2040, STM32).
 - [ ] Integrated firmware flashing.
-- [ ] Expanded board support (RP2040, STM32).
+- [ ] Full Windows validation (COM ports, file operations and REPL).
 
 ## 🤝 Contributing
 This project is in active development. I use it daily for my professional projects and aim to respond to issues and PRs quickly. If you find a bug or have a feature request, please open an issue.
-
-License: MIT
 
 ## License
 MIT — see the `LICENSE` file in this repository.

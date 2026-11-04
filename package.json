@@ -10,13 +10,20 @@
   },
   "extensionDependencies": [],
   "extensionPack": [],
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": "limited",
+      "description": "In Restricted Mode, the Python interpreter and serial port are only read from user settings, never from the workspace's .vscode/settings.json.",
+      "restrictedConfigurations": [
+        "mpyWorkbench.pythonPath",
+        "mpyWorkbench.connect",
+        "mpyWorkbench.rootPath"
+      ]
     }
   },
-  "extensionPack": [],
   "categories": [
     "Programming Languages",
     "Debuggers"
@@ -26,8 +33,10 @@
   ],
   "main": "./dist/extension.js",
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test \"dist/test/**/*.test.js\"",
     "package": "vsce package"
   },
   "devDependencies": {
@@ -67,6 +76,11 @@
           "id": "mpyWorkbenchFsView",
           "name": "Files",
           "icon": "$(files)"
+        },
+        {
+          "id": "mpyWorkbenchLocalFilesView",
+          "name": "Local Files",
+          "icon": "$(folder)"
         },
         {
           "id": "mpyWorkbenchActionsView",
@@ -122,11 +136,6 @@
         "command": "mpyWorkbench.pickPort",
         "title": "MPY Workbench: Select Serial Port",
         "icon": "$(plug)"
-      },
-      {
-        "command": "mpyWorkbench.refreshPorts",
-        "title": "MPY Workbench: Refresh Ports",
-        "icon": "$(refresh)"
       },
       {
         "command": "mpyWorkbench.setPort",
@@ -246,6 +255,52 @@
       {
         "command": "mpyWorkbench.toggleWorkspaceAutoSync",
         "title": "MPY Workbench: Toggle workspace Auto-Sync on Save"
+      },
+      {
+        "command": "mpyWorkbench.uploadToBoard",
+        "title": "MPY Workbench: Upload to Board",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "mpyWorkbench.localOpen",
+        "title": "MPY Workbench: Open"
+      },
+      {
+        "command": "mpyWorkbench.localCut",
+        "title": "MPY Workbench: Cut"
+      },
+      {
+        "command": "mpyWorkbench.localCopy",
+        "title": "MPY Workbench: Copy"
+      },
+      {
+        "command": "mpyWorkbench.localCopyPath",
+        "title": "MPY Workbench: Copy Path"
+      },
+      {
+        "command": "mpyWorkbench.localCopyRelativePath",
+        "title": "MPY Workbench: Copy Relative Path"
+      },
+      {
+        "command": "mpyWorkbench.localRename",
+        "title": "MPY Workbench: Rename"
+      },
+      {
+        "command": "mpyWorkbench.localDelete",
+        "title": "MPY Workbench: Delete"
+      },
+      {
+        "command": "mpyWorkbench.downloadFileFromBoard",
+        "title": "MPY Workbench: Download File from Board",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "mpyWorkbench.cancelAllTasks",
+        "title": "MPY Workbench: Cancel All Tasks"
+      },
+      {
+        "command": "mpyWorkbench.showLog",
+        "title": "MPY Workbench: Show Log"
       }
     ],
     "menus": {
@@ -351,6 +406,130 @@
           "command": "mpyWorkbench.newFolderInTree",
           "when": "view == mpyWorkbenchFsView && !viewItem",
           "group": "0_create@2"
+        },
+        {
+          "command": "mpyWorkbench.uploadToBoard",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "inline"
+        },
+        {
+          "command": "mpyWorkbench.uploadToBoard",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "0_board@0"
+        },
+        {
+          "command": "mpyWorkbench.localOpen",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "1_open@0"
+        },
+        {
+          "command": "mpyWorkbench.localCut",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "2_clipboard@0"
+        },
+        {
+          "command": "mpyWorkbench.localCopy",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "2_clipboard@1"
+        },
+        {
+          "command": "mpyWorkbench.localCopyPath",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "3_path@0"
+        },
+        {
+          "command": "mpyWorkbench.localCopyRelativePath",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "3_path@1"
+        },
+        {
+          "command": "mpyWorkbench.localRename",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "4_edit@0"
+        },
+        {
+          "command": "mpyWorkbench.localDelete",
+          "when": "view == mpyWorkbenchLocalFilesView && (viewItem == file || viewItem == dir)",
+          "group": "4_edit@1"
+        },
+        {
+          "command": "mpyWorkbench.downloadFileFromBoard",
+          "when": "view == mpyWorkbenchFsView && viewItem == file",
+          "group": "2_sync@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mpyWorkbench.openFile",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.newFileInTree",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.newFolderInTree",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.renameNode",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.openFileFromLocal",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.syncFileLocalToBoard",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.syncFileBoardToLocal",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.delete",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.deleteBoardAndLocal",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.downloadFileFromBoard",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.uploadToBoard",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localOpen",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localCut",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localCopy",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localCopyPath",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localCopyRelativePath",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localRename",
+          "when": "false"
+        },
+        {
+          "command": "mpyWorkbench.localDelete",
+          "when": "false"
         }
       ]
     },
@@ -361,12 +540,13 @@
         "mpyWorkbench.autoSyncOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Auto-sync on save: when enabled, saving a local file also uploads it to the board; when disabled, only saves locally. Per-workspace override available in .mpystudio/config.json."
+          "description": "Auto-sync on save: when enabled, saving a local file also uploads it to the board; when disabled, only saves locally. Per-workspace override available in .mpy-workbench/config.json."
         },
         "mpyWorkbench.connect": {
           "type": "string",
           "default": "auto",
-          "description": "Serial device (e.g. auto, /dev/ttyUSB0, COM3)"
+          "description": "Serial device (e.g. auto, /dev/ttyUSB0, COM3)",
+          "scope": "machine-overridable"
         },
         "mpyWorkbench.serialAutoSuspend": {
           "type": "boolean",
@@ -406,7 +586,13 @@
         "mpyWorkbench.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Override Python interpreter path. Leave empty to use VS Code's configured Python interpreter."
+          "description": "Override Python interpreter path. Leave empty to use VS Code's configured Python interpreter.",
+          "scope": "machine-overridable"
+        },
+        "mpyWorkbench.debugLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write detailed debug messages to the 'MPY Workbench' output channel."
         }
       }
     }

@@ -16,7 +16,7 @@ def listdir(x):
     else:
         return [rec[0] for rec in os.ilistdir(x) if rec[0] not in ('.', '..')]
 DIRBIT = 0x4000
-root = r"{PATH}"
+root = {PATH}
 result = []
 try:
     names = listdir(root)
@@ -84,7 +84,8 @@ def parse_result(output):
 def list_dir(port, baudrate, path):
     with serial.Serial(port, baudrate, timeout=2) as ser:
         enter_raw_repl(ser)
-        script = LISTDIR_SCRIPT_TEMPLATE.replace("{PATH}", path)
+        # repr() produces a valid, safely escaped string literal for any path
+        script = LISTDIR_SCRIPT_TEMPLATE.replace("{PATH}", repr(path))
         output = exec_script(ser, script)
         exit_raw_repl(ser)
         result = parse_result(output)
