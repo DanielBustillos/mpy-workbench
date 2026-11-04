@@ -8,6 +8,7 @@ import { getMpremoteExecOptions } from "./mpremote";
 import { getPythonPath } from "./pythonInterpreter";
 import { buildCommandLine, detectShellKind } from "./shellQuote";
 import { log } from "./logger";
+import { resolveSyncRoot, syncRelative } from "./syncRoot";
 
 /** Configured serial port without the optional `serial://` prefix, or undefined for "auto". */
 function getConfiguredDevice(): string | undefined {
@@ -216,8 +217,8 @@ export async function runActiveFile(): Promise<void> {
   if (!ws) {
     cmd = await buildMpremoteTerminalCommand(["connect", device, "run", filePath]);
   } else {
-    const rel = path.relative(ws.uri.fsPath, filePath).replace(/\\/g, "/");
-    if (rel.startsWith("..")) {
+    const rel = syncRelative(getSyncRoot(ws), filePath);
+    if (!rel) {
       cmd = await buildMpremoteTerminalCommand(["connect", device, "run", filePath]);
     } else {
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
@@ -369,6 +370,12 @@ async function strictConnectHandshake(interrupt: boolean) {
       await new Promise(r => setTimeout(r, 200));
     }
   }
+}
+
+/** Absolute local folder that mirrors the board (workspace root or mpyWorkbench.localRoot). */
+export function getSyncRoot(ws: vscode.WorkspaceFolder): string {
+  const localRoot = vscode.workspace.getConfiguration("mpyWorkbench", ws.uri).get<string>("localRoot", "");
+  return resolveSyncRoot(ws.uri.fsPath, localRoot);
 }
 
 export function toLocalRelative(devicePath: string, rootPath: string): string {

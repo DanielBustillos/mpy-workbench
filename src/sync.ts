@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -13,22 +14,62 @@ export interface Manifest {
 
 export type IgnoreMatcher = (relPath: string, isDir: boolean) => boolean;
 
+/**
+ * Kind of a directory entry, following symbolic links to their target.
+ * Returns undefined for broken links and special files (sockets, devices...).
+ */
+export async function entryKind(absPath: string, dirent: Dirent): Promise<"file" | "dir" | undefined> {
+  if (dirent.isDirectory()) return "dir";
+  if (dirent.isFile()) return "file";
+  if (dirent.isSymbolicLink()) {
+    try {
+      const st = await fs.stat(absPath); // stat() follows the link
+      if (st.isDirectory()) return "dir";
+      if (st.isFile()) return "file";
+    } catch {
+      // broken link
+    }
+  }
+  return undefined;
+}
+
+/** True if the path itself is a symbolic link (the link is not followed). */
+export async function isSymlink(absPath: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(absPath)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 export async function buildManifest(rootDir: string, ignore: IgnoreMatcher | Set<string>): Promise<Manifest> {
   const matcher: IgnoreMatcher = (typeof ignore === 'function')
     ? ignore as IgnoreMatcher
     : ((rel, isDir) => (ignore as Set<string>).has(rel.split('/').pop() || rel));
 
   const files: Record<string, ManifestEntry> = {};
+  // Real paths of directories already walked, to stop symlink loops.
+  const visitedDirs = new Set<string>();
   async function walk(dir: string, relBase = ""): Promise<void> {
+    try {
+      const real = await fs.realpath(dir);
+      if (visitedDirs.has(real)) return;
+      visitedDirs.add(real);
+    } catch {
+      return;
+    }
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const e of entries) {
       const rel = path.posix.join(relBase, e.name);
       const abs = path.join(dir, e.name);
-      const isDir = e.isDirectory();
+      // Symlinks are followed, so linked libraries are uploaded as real files (#34).
+      const kind = await entryKind(abs, e);
+      if (!kind) continue;
+      const isDir = kind === "dir";
       if (matcher(rel, isDir)) continue;
       if (isDir) {
         await walk(abs, rel);
-      } else if (e.isFile()) {
+      } else {
         const st = await fs.stat(abs);
         files[rel] = { size: st.size, mtime: Math.floor(st.mtimeMs) };
       }

@@ -593,8 +593,31 @@
           "type": "boolean",
           "default": false,
           "description": "Write detailed debug messages to the 'MPY Workbench' output channel."
+        },
+        "mpyWorkbench.thonnyShortcuts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Thonny-style shortcuts while a serial port is selected: F5 runs the active Python file on the board, Ctrl+F2 (Cmd+F2 on macOS) stops it. Disable to keep F5 for the VS Code debugger."
+        },
+        "mpyWorkbench.localRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Local folder (relative to the workspace) that mirrors the board's root path, e.g. \"device\". Leave empty to sync the whole workspace. .mpyignore patterns are relative to this folder."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "mpyWorkbench.runActiveFile",
+        "key": "f5",
+        "when": "editorLangId == python && mpyWorkbench.hasPort && config.mpyWorkbench.thonnyShortcuts && !inDebugMode"
+      },
+      {
+        "command": "mpyWorkbench.stop",
+        "key": "ctrl+f2",
+        "mac": "cmd+f2",
+        "when": "mpyWorkbench.hasPort && config.mpyWorkbench.thonnyShortcuts && !inDebugMode"
+      }
+    ]
   }
 }

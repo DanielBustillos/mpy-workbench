@@ -1,5 +1,14 @@
 # Cambios
 
+## [Unreleased]
+### Añadido
+- **Sincronizar solo una subcarpeta (#7)**: nuevo ajuste `mpyWorkbench.localRoot` (p. ej. `device`). Solo esa carpeta se refleja en la placa; `.mpyignore` se aplica relativo a ella.
+- **Atajos estilo Thonny (#17)**: `F5` ejecuta el archivo activo en la placa y `Ctrl+F2` / `Cmd+F2` lo detiene. Solo con un puerto seleccionado y fuera del depurador; se desactivan con `mpyWorkbench.thonnyShortcuts`.
+
+### Corregido
+- **Symlinks (#34)**: "Upload all" y subir carpeta ahora siguen enlaces simbólicos (archivos y carpetas, sin bucles). "Download all" omite archivos que localmente son enlaces para no sobrescribir el original.
+- **Upload Active File**: en Windows no convertía `\` a `/` e ignoraba `mpyWorkbench.rootPath`.
+
 ## [0.3.3] - 2026-11-04
 ### Seguridad
 - **Inyección de comandos corregida**: Stop/Interrupt/Soft reset ejecutaban `echo -e ... > <puerto>` en un shell con el puerto sin escapar. Ahora se escribe directo al dispositivo serie (solo dispositivos de carácter) y todas las llamadas a mpremote usan `execFile` con lista de argumentos, sin shell.

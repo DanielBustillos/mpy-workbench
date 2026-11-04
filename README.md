@@ -33,6 +33,13 @@ These commands perform full or incremental synchronization between your local wo
 - **Download all Board → Local:** Downloads all board files, overwriting local copies.
 - **Delete all files on board:** Removes all files on the device.
 
+## Keyboard shortcuts
+
+While a serial port is selected (Thonny-style, disable with `mpyWorkbench.thonnyShortcuts`):
+
+- `F5` — run the active Python file on the board
+- `Ctrl+F2` (`Cmd+F2` on macOS) — stop the running program
+
 ## Useful commands (Command Palette)
 
 - `MPY Workbench: Refresh` — refresh the file tree
@@ -47,6 +54,14 @@ The extension stores per-workspace settings and manifests inside a workspace fol
 
 - Workspace override file: `.mpy-workbench/config.json`
 - Sync manifest: `.mpy-workbench/esp32sync.json`
+
+### Sync only a subfolder
+
+Set `mpyWorkbench.localRoot` (e.g. `device`) to sync only that folder with the board root (`mpyWorkbench.rootPath`). Everything else in the workspace (docs, tests, tooling) stays local. `.mpyignore` patterns are relative to this folder.
+
+### Symlinks
+
+Symlinked files and folders are uploaded as real files, so you can link shared libraries into your project. "Download all" never writes through a local symlink, so the linked originals are not overwritten.
 
 Use the command `MPY Workbench: Toggle workspace Auto-Sync on Save` to enable or disable auto-sync for the current workspace. If no workspace config exists the extension falls back to the global setting `mpyWorkbench.autoSyncOnSave` (default: `false`).
 

@@ -9,7 +9,7 @@ import * as mp from "./mpremote";
 import { refreshFileTreeCache, debugTreeParsing, debugFilesystemStatus, runMpremote } from "./mpremote";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
-import { buildManifest, diffManifests, saveManifest, loadManifest, defaultIgnorePatterns, createIgnoreMatcher, createEmptyManifest, Manifest } from "./sync";
+import { buildManifest, diffManifests, saveManifest, loadManifest, defaultIgnorePatterns, createIgnoreMatcher, createEmptyManifest, Manifest, entryKind, isSymlink } from "./sync";
 import { Esp32DecorationProvider } from "./decorations";
 import { listDirPyRaw } from "./pyraw";
 import {
@@ -26,10 +26,12 @@ import {
   openReplTerminal,
   toLocalRelative,
   toDevicePath,
+  getSyncRoot,
   clearRunFileTerminalIf
 } from "./mpremoteCommands";
 import { clearPythonCache } from "./pythonInterpreter";
 import { log } from "./logger";
+import { syncRelative } from "./syncRoot";
 
 export function activate(context: vscode.ExtensionContext) {
   // Check if mpremote is available
@@ -314,7 +316,17 @@ export function activate(context: vscode.ExtensionContext) {
     if (!ws) return undefined;
     const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
     const rel = toLocalRelative(devicePath, rootPath);
-    return path.join(ws.uri.fsPath, ...rel.split("/").filter(Boolean));
+    return path.join(getSyncRoot(ws), ...rel.split("/").filter(Boolean));
+  }
+
+  /** True if `rel` (relative to `root`) or any of its parent folders is a symlink. */
+  async function pathHasSymlink(root: string, rel: string): Promise<boolean> {
+    let current = root;
+    for (const part of rel.split("/").filter(Boolean)) {
+      current = path.join(current, part);
+      if (await isSymlink(current)) return true;
+    }
+    return false;
   }
 
   /** Delete a board file/folder with a progress notification. Returns true on success. */
@@ -352,9 +364,10 @@ export function activate(context: vscode.ExtensionContext) {
     for (const e of entries) {
       const entryAbs = path.join(localDirPath, e.name);
       const deviceChildPath = deviceDirPath === "/" ? `/${e.name}` : `${deviceDirPath}/${e.name}`;
-      if (e.isDirectory()) {
+      const kind = await entryKind(entryAbs, e); // follows symlinks (#34)
+      if (kind === "dir") {
         await uploadLocalFolderToDevice(entryAbs, deviceDirPath);
-      } else if (e.isFile()) {
+      } else if (kind === "file") {
         await withAutoSuspend(() => mp.cpToDevice(entryAbs, deviceChildPath));
         tree.addNode(deviceChildPath, false);
       }
@@ -406,7 +419,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         await ensureMpyWorkbenchDir(ws.uri.fsPath);
         await ensureWorkbenchIgnoreFile(ws.uri.fsPath);
-        const emptyManifest = createEmptyManifest(ws.uri.fsPath);
+        const emptyManifest = createEmptyManifest(getSyncRoot(ws));
         const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
         await saveManifest(manifestPath, emptyManifest);
         vscode.window.showInformationMessage("Workspace initialized for MPY Workbench.");
@@ -435,7 +448,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Rebuild manifest
         const matcher = await createIgnoreMatcher(ws.uri.fsPath);
-        const newManifest = await buildManifest(ws.uri.fsPath, matcher);
+        const newManifest = await buildManifest(getSyncRoot(ws), matcher);
         const manifestPath = path.join(ws.uri.fsPath, MPY_WORKBENCH_DIR, MPY_MANIFEST_FILE);
         await saveManifest(manifestPath, newManifest);
 
@@ -513,7 +526,12 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-      const devicePath = toDevicePath(node.relPath, rootPath);
+      const relToSync = syncRelative(getSyncRoot(ws), node.fsPath);
+      if (!relToSync) {
+        vscode.window.showWarningMessage(`${node.relPath} is outside mpyWorkbench.localRoot, so it has no place on the board.`);
+        return;
+      }
+      const devicePath = toDevicePath(relToSync, rootPath);
       try {
         if (node.kind === "file") {
           await withAutoSuspend(() => mp.cpToDevice(node.fsPath, devicePath));
@@ -611,7 +629,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
         const matcher2 = await createIgnoreMatcher(ws.uri.fsPath);
-        const man = await buildManifest(ws.uri.fsPath, matcher2);
+        const syncRoot = getSyncRoot(ws);
+        const man = await buildManifest(syncRoot, matcher2);
 
         // Upload all files with progress using single mpremote fs cp command
         await vscode.window.withProgress({
@@ -770,7 +789,7 @@ export function activate(context: vscode.ExtensionContext) {
             const validFiles = [];
             const missingFiles = [];
             for (const relativePath of files) {
-              const localPath = path.join(ws.uri.fsPath, relativePath);
+              const localPath = path.join(syncRoot, relativePath);
 
               try {
                 await fs.access(localPath);
@@ -804,7 +823,7 @@ export function activate(context: vscode.ExtensionContext) {
             let failed = 0;
 
             for (const relativePath of validFiles) {
-              const localPath = path.join(ws.uri.fsPath, relativePath);
+              const localPath = path.join(syncRoot, relativePath);
               const devicePath = path.posix.join(rootPath, relativePath);
 
               // Double-check file exists before attempting upload (in case it was deleted during the process)
@@ -878,19 +897,32 @@ export function activate(context: vscode.ExtensionContext) {
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const deviceStats = await withAutoSuspend(() => mp.listTreeStats(rootPath));
       const matcher = await createIgnoreMatcher(ws.uri.fsPath);
-      const toDownload = deviceStats
+      const syncRoot = getSyncRoot(ws);
+      const candidates = deviceStats
         .filter(stat => !stat.isDir)
         .filter(stat => {
           const rel = toLocalRelative(stat.path, rootPath);
           return !matcher(rel, false);
         });
+      // Never write through a local symlink: that would overwrite the linked
+      // library's original file outside the project (#34).
+      const toDownload: typeof candidates = [];
+      const skippedLinks: string[] = [];
+      for (const stat of candidates) {
+        const rel = toLocalRelative(stat.path, rootPath);
+        if (await pathHasSymlink(syncRoot, rel)) skippedLinks.push(rel);
+        else toDownload.push(stat);
+      }
+      if (skippedLinks.length > 0) {
+        log.info(`Download all: skipped ${skippedLinks.length} file(s) that are symlinks locally:`, skippedLinks);
+      }
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Board: Sync all files (Board → Local)", cancellable: false }, async (progress) => {
         let done = 0;
         const total = toDownload.length;
         await withAutoSuspend(async () => {
           for (const stat of toDownload) {
             const rel = toLocalRelative(stat.path, rootPath);
-            const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+            const abs = path.join(syncRoot, ...rel.split("/"));
             progress.report({ message: `Downloading ${rel} (${++done}/${total})` });
             await fs.mkdir(path.dirname(abs), { recursive: true });
             await mp.cpFromDevice(stat.path, abs);
@@ -936,18 +968,26 @@ export function activate(context: vscode.ExtensionContext) {
       if (!ed) { vscode.window.showErrorMessage("No active editor"); return; }
       await ed.document.save();
       const ws = vscode.workspace.getWorkspaceFolder(ed.document.uri);
-      const rel = ws ? path.relative(ws.uri.fsPath, ed.document.uri.fsPath) : path.basename(ed.document.uri.fsPath);
+      const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
+      let rel: string;
       if (ws) {
+        const r = syncRelative(getSyncRoot(ws), ed.document.uri.fsPath);
+        if (!r) {
+          vscode.window.showWarningMessage("This file is outside mpyWorkbench.localRoot, so it has no place on the board.");
+          return;
+        }
+        rel = r;
         try {
           const matcher = await createIgnoreMatcher(ws.uri.fsPath);
-          const relPosix = rel.replace(/\\\\/g, '/');
-          if (matcher(relPosix, false)) {
-            vscode.window.showInformationMessage(`Upload skipped (ignored): ${relPosix}`);
+          if (matcher(rel, false)) {
+            vscode.window.showInformationMessage(`Upload skipped (ignored): ${rel}`);
             return;
           }
         } catch {}
+      } else {
+        rel = path.basename(ed.document.uri.fsPath);
       }
-      const dest = "/" + rel.replace(/\\\\/g, "/");
+      const dest = toDevicePath(rel, rootPath);
       // Use replacing upload to avoid partial writes while code may autostart
       try {
         await withAutoSuspend(() => mp.uploadReplacing(ed.document.uri.fsPath, dest));
@@ -966,7 +1006,7 @@ export function activate(context: vscode.ExtensionContext) {
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       if (ws) {
         const rel = toLocalRelative(node.path, rootPath);
-        const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+        const abs = path.join(getSyncRoot(ws), ...rel.split("/"));
         await fs.mkdir(path.dirname(abs), { recursive: true });
 
         // Check if file is local-only (exists locally but not on board)
@@ -1023,7 +1063,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
       const rel = toLocalRelative(node.path, rootPath);
-      const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+      const abs = path.join(getSyncRoot(ws), ...rel.split("/"));
       try {
         await fs.mkdir(path.dirname(abs), { recursive: true });
         await withAutoSuspend(() => mp.cpFromDevice(node.path, abs));
@@ -1141,7 +1181,7 @@ export function activate(context: vscode.ExtensionContext) {
       });
       if (!filename) return;
       const rel = normalizeRelativeName(filename);
-      const abs = path.join(ws.uri.fsPath, ...rel.split("/"));
+      const abs = path.join(getSyncRoot(ws), ...rel.split("/"));
       try {
         await fs.mkdir(path.dirname(abs), { recursive: true });
         await fs.writeFile(abs, "", { flag: "wx" });
@@ -1182,7 +1222,7 @@ export function activate(context: vscode.ExtensionContext) {
         const doc = await vscode.workspace.openTextDocument(abs);
         await vscode.window.showTextDocument(doc, { preview: true });
       } catch {
-        vscode.window.showErrorMessage(`File not found in local workspace: ${path.relative(vscode.workspace.workspaceFolders![0].uri.fsPath, abs)}`);
+        vscode.window.showErrorMessage(`File not found in local workspace: ${abs}`);
       }
     }),
     vscode.commands.registerCommand("mpyWorkbench.syncFileLocalToBoard", async (node: Esp32Node) => {
@@ -1343,7 +1383,8 @@ export function activate(context: vscode.ExtensionContext) {
         return; // save locally only
       }
       const rootPath = vscode.workspace.getConfiguration().get<string>("mpyWorkbench.rootPath", "/");
-      const rel = path.relative(ws.uri.fsPath, doc.uri.fsPath).replace(/\\/g, "/");
+      const rel = syncRelative(getSyncRoot(ws), doc.uri.fsPath);
+      if (!rel) return; // outside mpyWorkbench.localRoot: nothing to upload
       try {
         const matcher = await createIgnoreMatcher(ws.uri.fsPath);
         if (matcher(rel, false)) {
@@ -1351,7 +1392,7 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
       } catch {}
-      const deviceDest = (rootPath === "/" ? "/" : rootPath.replace(/\/$/, "")) + "/" + rel;
+      const deviceDest = toDevicePath(rel, rootPath);
       try {
         await withAutoSuspend(() => mp.cpToDevice(doc.uri.fsPath, deviceDest));
         tree.addNode(deviceDest, false);
