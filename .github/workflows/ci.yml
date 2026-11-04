@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Check Marketplace icon size limit (1024 KB)
+        run: |
+          node -e '
+            const fs = require("fs");
+            const icon = require("./package.json").icon;
+            const kb = fs.statSync(icon).size / 1024;
+            console.log(`${icon}: ${kb.toFixed(0)} KB`);
+            if (kb > 1024) { console.error("Icon exceeds the 1024 KB Marketplace limit"); process.exit(1); }
+          '
+      - name: Build .vsix
+        run: npx vsce package -o mpy-workbench.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: mpy-workbench.vsix
