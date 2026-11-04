@@ -1,6 +1,6 @@
 # Cambios
 
-## [Unreleased]
+## [0.3.4] - 2026-11-04
 ### Añadido
 - **Sincronizar solo una subcarpeta (#7)**: nuevo ajuste `mpyWorkbench.localRoot` (p. ej. `device`). Solo esa carpeta se refleja en la placa; `.mpyignore` se aplica relativo a ella.
 - **Auto-stop opcional (#5, #17, #26)**: con `mpyWorkbench.autoStopBeforeBoardAction` activado, el programa lanzado con "Run file" se detiene (Ctrl-C) antes de subir archivos, auto-sync al guardar, Run file, Stop y Soft reset, para liberar el puerto. Desactivado por defecto. Basado en la propuesta del PR #31.
