@@ -317,16 +317,22 @@ export async function getReplTerminal(context?: vscode.ExtensionContext): Promis
     throw new Error("Select a specific serial port first (not 'auto')");
   }
 
-  // Launch the configured Python interpreter directly as the terminal process.
-  // No shell is involved, so there is nothing to quote on any platform.
-  const pythonPath = await getPythonPath(vscode.workspace.workspaceFolders?.[0]);
-  replTerminal = vscode.window.createTerminal({
-    name: "ESP32 REPL",
-    shellPath: pythonPath,
-    shellArgs: ["-m", "mpremote", "connect", device],
-    env: { PYTHONIOENCODING: "utf-8" }
-  });
-
+  if (process.platform === "win32") {
+    const cmd = await buildMpremoteTerminalCommand(["connect", device]);
+    replTerminal = vscode.window.createTerminal({
+      name: "ESP32 REPL",
+      cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    });
+    replTerminal.sendText(cmd, true);
+  } else {
+    const pythonPath = await getPythonPath(vscode.workspace.workspaceFolders?.[0]);
+    replTerminal = vscode.window.createTerminal({
+      name: "ESP32 REPL",
+      shellPath: pythonPath,
+      shellArgs: ["-m", "mpremote", "connect", device],
+      env: { PYTHONIOENCODING: "utf-8" }
+    });
+  }
   // Send interrupt (Ctrl-C) to ensure device is responsive
   setTimeout(() => {
     if (replTerminal) {
