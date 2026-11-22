@@ -942,10 +942,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 
     vscode.commands.registerCommand("mpyWorkbench.openSerial", openReplTerminal),
-    vscode.commands.registerCommand("mpyWorkbench.openRepl", async () => {
-      const term = await getReplTerminal(context);
-      term.show(true);
-    }),
+    // Same path as openSerial: interrupt the board through mpremote, then open the REPL
+    vscode.commands.registerCommand("mpyWorkbench.openRepl", openReplTerminal),
     vscode.commands.registerCommand("mpyWorkbench.stopSerial", async () => {
       await closeReplTerminal();
       vscode.window.showInformationMessage("Board: ESP32 REPL closed");

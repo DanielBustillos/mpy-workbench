@@ -17,6 +17,12 @@ function getConfiguredDevice(): string | undefined {
   return connect.replace(/^serial:\/\//, "").replace(/^serial:\//, "");
 }
 
+/** Command line that opens the mpremote REPL on the configured port. */
+async function buildReplCommand(device = getConfiguredDevice()): Promise<string> {
+  if (!device) throw new Error("Select a specific serial port first (not 'auto')");
+  return buildMpremoteTerminalCommand(["connect", device]);
+}
+
 /** Command line for `python -m mpremote <args>`, quoted for the shell used by new terminals. */
 async function buildMpremoteTerminalCommand(args: string[]): Promise<string> {
   const ws = vscode.workspace.workspaceFolders?.[0];
@@ -69,12 +75,15 @@ export async function disconnectReplTerminal() {
 export async function restartReplInExistingTerminal() {
   if (!replTerminal) return;
   try {
-    // After Ctrl-X the mpremote process (the terminal's only process) has exited,
-    // so text sent to the old terminal goes nowhere. Replace it with a fresh one.
-    try { replTerminal.dispose(); } catch {}
-    replTerminal = undefined;
-    const term = await getReplTerminal();
-    term.show(true);
+    // After Ctrl-X mpremote exits but the terminal's shell stays, so the same
+    // terminal is reused; a closed terminal is replaced by a new one.
+    if (vscode.window.terminals.some(t => t === replTerminal)) {
+      replTerminal.sendText(await buildReplCommand(), true);
+      replTerminal.show(true);
+    } else {
+      replTerminal = undefined;
+      (await getReplTerminal()).show(true);
+    }
   } catch (err) {
     log.warn("restartReplInExistingTerminal failed:", err);
   }
@@ -317,28 +326,17 @@ export async function getReplTerminal(context?: vscode.ExtensionContext): Promis
     throw new Error("Select a specific serial port first (not 'auto')");
   }
 
-  // Launch the configured Python interpreter directly as the terminal process.
-  // No shell is involved, so there is nothing to quote on any platform.
-  const pythonPath = await getPythonPath(vscode.workspace.workspaceFolders?.[0]);
+  // Run mpremote inside a normal shell (as "Run file" does) so the command and
+  // any connection error stay visible, and the terminal survives mpremote exiting.
+  // No keys are sent blindly afterwards: a Ctrl-C that arrived before mpremote had
+  // connected aborted it with KeyboardInterrupt (#36). Interrupting the board is
+  // done by openReplTerminal() before the terminal opens.
   replTerminal = vscode.window.createTerminal({
     name: "ESP32 REPL",
-    shellPath: pythonPath,
-    shellArgs: ["-m", "mpremote", "connect", device],
+    cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     env: { PYTHONIOENCODING: "utf-8" }
   });
-
-  // Send interrupt (Ctrl-C) to ensure device is responsive
-  setTimeout(() => {
-    if (replTerminal) {
-      replTerminal.sendText("\x03", false); // Ctrl-C
-      // Small delay then send Ctrl-B for friendly REPL
-      setTimeout(() => {
-        if (replTerminal) {
-          replTerminal.sendText("\x02", false); // Ctrl-B
-        }
-      }, 100);
-    }
-  }, 500); // Wait 500ms for terminal to initialize
+  replTerminal.sendText(await buildReplCommand(device), true);
 
   return replTerminal;
 }
@@ -359,6 +357,9 @@ export async function closeReplTerminal() {
 }
 
 export async function openReplTerminal() {
+  // Start from a fresh terminal: it frees the port for the handshake below and
+  // recovers from an earlier mpremote that exited with an error.
+  await closeReplTerminal();
   // Strict handshake like Thonny: ensure device is interrupted and responsive before opening REPL
   const cfg = vscode.workspace.getConfiguration();
   const interrupt = cfg.get<boolean>("mpyWorkbench.interruptOnConnect", true);
