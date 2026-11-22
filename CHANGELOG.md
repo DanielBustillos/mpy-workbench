@@ -1,5 +1,10 @@
 # Cambios
 
+## [0.3.5] - 2026-11-22
+### Corregido
+- **REPL en Windows (#36)**: "Open REPL" fallaba casi siempre. El REPL ahora corre dentro de una terminal con shell (igual que "Run file"), así que el comando y los errores quedan visibles y la terminal no se cierra si mpremote termina. Se quitaron el Ctrl-C/Ctrl-B que se enviaban a ciegas a los 500 ms: si llegaban antes de que mpremote conectara, lo abortaban con `KeyboardInterrupt`. Basado en el PR #37 de @kai-morich, aplicado a todos los sistemas.
+- **Open REPL** ahora interrumpe la placa con mpremote antes de abrir la terminal (igual que `openSerial`) y siempre parte de una terminal nueva, por lo que se recupera de un intento anterior fallido.
+
 ## [0.3.4] - 2026-11-04
 ### Añadido
 - **Sincronizar solo una subcarpeta (#7)**: nuevo ajuste `mpyWorkbench.localRoot` (p. ej. `device`). Solo esa carpeta se refleja en la placa; `.mpyignore` se aplica relativo a ella.
