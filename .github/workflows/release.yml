@@ -1,0 +1,84 @@
+name: Release
+
+# Publishes to the VS Code Marketplace when main gets a package.json version
+# that has no git tag yet, then tags it and creates a GitHub release.
+# Requires the repository secret VSCE_PAT (Azure DevOps token with
+# Marketplace > Manage scope). Without it the job only reports and skips.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whether this version is already released
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "Version $VERSION is already tagged; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check publishing token
+        id: token
+        if: steps.version.outputs.release == 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::warning::VSCE_PAT secret is not set; skipping Marketplace publish."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.ok == 'true'
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install and test
+        if: steps.token.outputs.ok == 'true'
+        run: |
+          npm ci
+          npm test
+
+      - name: Publish to the VS Code Marketplace
+        if: steps.token.outputs.ok == 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          npx vsce package -o "mpy-workbench-${{ steps.version.outputs.version }}.vsix"
+          npx vsce publish --packagePath "mpy-workbench-${{ steps.version.outputs.version }}.vsix"
+
+      - name: Tag and create GitHub release
+        if: steps.token.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "MPY Workbench $VERSION"
+          git push origin "$VERSION"
+          NOTES=$(awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md)
+          gh release create "$VERSION" "mpy-workbench-$VERSION.vsix" --title "MPY Workbench $VERSION" --notes "${NOTES:-See CHANGELOG.md}"
